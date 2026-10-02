@@ -689,6 +689,7 @@ function App() {
   const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "", url: "" });
   const [planBusy, setPlanBusy] = useState(false);
   const [stapleDraft, setStapleDraft] = useState("");
+  const [pickMeal, setPickMeal] = useState(null); // index of the plan meal whose "Vælg selv" list is open
   const [foodBudgetEdit, setFoodBudgetEdit] = useState(false);
   const [showFoodTx, setShowFoodTx] = useState(false);
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
@@ -1913,15 +1914,18 @@ function App() {
     } finally { setPlanBusy(false); }
   };
 
-  // Swap one meal for the best one not in the plan; the swapped-out meal goes to the back of the queue.
-  const swapMeal = (i) => {
+  // Replace meal i with alternative k (default: the best one not in the plan); the old meal goes to the
+  // back of the queue. Every alternative is already priced with this plan's stores.
+  const replaceMeal = (i, k = 0) => {
     const plan = shop.plan;
-    if (!plan?.alts?.length) return;
-    const meals = plan.meals.slice(), [next, ...rest] = plan.alts;
+    if (!plan?.alts?.[k]) return;
+    const meals = plan.meals.slice(), next = plan.alts[k], rest = plan.alts.filter((_, j) => j !== k);
     const old = meals[i]; meals[i] = next;
     // The store comparison was for the original meals, so it no longer applies after a swap.
     setShop({...shop, plan: {...plan, meals, alts: [...rest, old], swapped: true, ...planCost(meals, plan.staples || [])}});
+    setPickMeal(null);
   };
+  const randomMeal = (i) => { const n = shop.plan?.alts?.length || 0; if (n) replaceMeal(i, Math.floor(Math.random() * n)); };
 
   const PlanTab = () => {
     const plan = shop.plan;
@@ -1993,7 +1997,18 @@ function App() {
             <div className="main">
               <div className="title" style=${{whiteSpace:"normal"}}>${m.fav ? "♥ " : ""}${m.name}${PROTEIN_MEALS.has(m.name) && html` <span className="chip info" style=${{fontSize:11, padding:"1px 7px"}}>Proteinrig</span>`}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
               <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div>
-              ${plan.alts?.length > 0 && html`<button className="link-btn small" style=${{marginTop:6}} onClick=${()=>swapMeal(i)}>Byt ret</button>`}
+              ${plan.alts?.length > 0 && html`<div style=${{display:"flex", flexWrap:"wrap", gap:14, marginTop:6}}>
+                <button className="link-btn small" onClick=${()=>replaceMeal(i)}>Byt</button>
+                <button className="link-btn small" onClick=${()=>randomMeal(i)}>Tilfældig</button>
+                <button className="link-btn small" aria-expanded=${pickMeal === i} onClick=${()=>setPickMeal(pickMeal === i ? null : i)}>${pickMeal === i ? "Luk" : "Vælg selv"}</button>
+              </div>`}
+              ${pickMeal === i && html`<div className="list" style=${{marginTop:8}}>${plan.alts
+                .map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length }))
+                .sort((x, y) => (y.a.fav - x.a.fav) || x.a.name.localeCompare(y.a.name, "da"))
+                .map(({ a, k, hits }) => html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:44}} onClick=${()=>replaceMeal(i, k)}>
+                  <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div></div>
+                  <div className=${"end small " + (hits ? "pos" : "muted")}>${hits}/${a.items.length} på tilbud</div>
+                </button>`)}</div>`}
             </div>
           </div>`)}</div>
         </div>
