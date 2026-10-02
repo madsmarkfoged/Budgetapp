@@ -281,7 +281,8 @@ const TJEK_SEARCH = "https://squid-api.tjek.com/v2/offers/search";
 const CHAINS = ["REMA 1000", "Netto", "Lidl", "Føtex", "Bilka", "Coop 365", "SuperBrugsen", "Kvickly", "Dagli'Brugsen", "Meny", "Spar", "Løvbjerg", "Min Købmand", "Lagkagehuset", "7-Eleven"];
 const AARHUS = { lat: 56.1572, lng: 10.2107, place: "Aarhus C" };
 const STAPLES = ["Mælk", "Æg", "Brød", "Kaffe", "Smør", "Ost", "Kylling", "Hakket oksekød", "Pasta", "Ris", "Bananer", "Yoghurt", "Toiletpapir"];
-const DEFAULT_SHOP = { items: [], stores: null, meals: [], staples: ["græsk yoghurt"], days: 6, cookDays: 3, plan: null, ...AARHUS };
+const DEFAULT_SHOP = { items: [], stores: null, meals: [], staples: ["græsk yoghurt"], days: 6, cookDays: 3, perNight: 1, plan: null,
+  pantry: null, freezer: [], useFreezer: true, preferProtein: true, offerCheck: null, ...AARHUS };
 const kr = (n) => new Intl.NumberFormat("da-DK", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(n) + " kr.";
 const chainOf = (dealerName) => CHAINS.find(c => (dealerName || "").toLowerCase().startsWith(c.toLowerCase())) || dealerName;
 
@@ -354,7 +355,6 @@ const MEAL_EXTRAS = {
   "Burger": ["rødløg", "bacon", "agurk"],
   "Pizza": ["mozzarella", "champignon", "peberfrugt", "oregano"],
 };
-const PROTEIN_MEALS = new Set(["Kyllingepasta med hytteostsauce", "Bolognese med linser", "Tunpasta med cherrytomater", "Kalkunpasta med pesto og spinat", "Kylling og broccoli i parmesanpasta", "Laksepasta med citron og spinat"]);
 const WEEKDAYS = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
 
 // An offer fits an ingredient when every word of the ingredient starts a word in the offer heading
@@ -432,34 +432,196 @@ const NORMAL_PRICES = {
 const normalPrice = (term, offers) =>
   NORMAL_PRICES[term.toLowerCase()] || (offers || []).find(o => o.before && offerFits(term, o.heading))?.before || 25;
 
-// What a set of meals costs, at the offer price where there is one, else normal price. Every meal is a
-// separate batch, so it buys its own packs (two chicken dishes = two packs of chicken); staples count once.
-const planCost = (meals, staples = []) => {
-  const v = [...staples, ...meals.flatMap(m => m.items)].map(i => ({ offer: i.offer?.price, normal: i.normal }));
-  return { total: v.reduce((s, x) => s + (x.offer ?? x.normal), 0), normal: v.reduce((s, x) => s + x.normal, 0) };
+// What each starter meal needs for `servings` portions: [quantity, unit] per ingredient.
+const MEAL_AMOUNTS = {
+  "Kylling i karry": [4, { "kylling": [500, "g"], "ris": [300, "g"], "kokosmælk": [400, "ml"], "løg": [1, "stk"] }],
+  "Spaghetti bolognese": [4, { "hakket oksekød": [500, "g"], "spaghetti": [400, "g"], "hakkede tomater": [800, "g"], "løg": [1, "stk"] }],
+  "Chili con carne": [4, { "hakket oksekød": [500, "g"], "kidneybønner": [400, "g"], "hakkede tomater": [800, "g"], "ris": [300, "g"] }],
+  "Tacos": [4, { "hakket oksekød": [500, "g"], "tortilla": [8, "stk"], "ost": [150, "g"], "salat": [1, "stk"] }],
+  "Pasta med kylling og pesto": [4, { "kylling": [500, "g"], "pasta": [400, "g"], "pesto": [190, "g"] }],
+  "Wok med kylling": [4, { "kylling": [500, "g"], "nudler": [250, "g"], "wokgrøntsager": [600, "g"] }],
+  "Lasagne": [4, { "hakket oksekød": [500, "g"], "lasagneplader": [250, "g"], "hakkede tomater": [800, "g"], "ost": [150, "g"] }],
+  "Laks med kartofler": [4, { "laks": [500, "g"], "kartofler": [1000, "g"], "broccoli": [500, "g"] }],
+  "Frikadeller med kartofler": [4, { "hakket svinekød": [500, "g"], "kartofler": [1000, "g"], "æg": [1, "stk"] }],
+  "Burger": [4, { "burgerboller": [4, "stk"], "hakket oksekød": [500, "g"], "ost": [100, "g"], "salat": [1, "stk"] }],
+  "Pizza": [4, { "pizzadej": [1, "stk"], "skinke": [150, "g"], "ost": [200, "g"], "tomatsauce": [200, "g"] }],
+  "Omelet med bacon": [4, { "æg": [8, "stk"], "bacon": [150, "g"], "ost": [100, "g"] }],
+  "Kyllingepasta med hytteostsauce": [4, { "kylling": [600, "g"], "pasta": [400, "g"], "hytteost": [500, "g"], "spinat": [150, "g"], "hvidløg": [3, "fed"] }],
+  "Bolognese med linser": [4, { "hakket oksekød": [500, "g"], "røde linser": [150, "g"], "pasta": [400, "g"], "hakkede tomater": [800, "g"], "løg": [1, "stk"] }],
+  "Tunpasta med cherrytomater": [4, { "tun": [3, "dåse"], "pasta": [400, "g"], "cherrytomater": [250, "g"], "rødløg": [1, "stk"], "skyr": [300, "g"] }],
+  "Kalkunpasta med pesto og spinat": [4, { "kalkun": [600, "g"], "pasta": [400, "g"], "pesto": [130, "g"], "spinat": [150, "g"] }],
+  "Kylling og broccoli i parmesanpasta": [4, { "kylling": [600, "g"], "pasta": [400, "g"], "broccoli": [500, "g"], "parmesan": [60, "g"] }],
+  "Laksepasta med citron og spinat": [4, { "laks": [500, "g"], "pasta": [400, "g"], "spinat": [150, "g"], "skyr": [300, "g"], "citron": [1, "stk"] }],
 };
+// Per ingredient: typical pack size in g/ml (pack), weight of one piece/can (piece) and protein per 100 g (p).
+// Rough Danish supermarket numbers – good enough to count packs and estimate protein.
+const ING = {
+  "kylling": { pack: 500, p: 23 }, "ris": { pack: 1000, p: 7 }, "kokosmælk": { pack: 400, p: 1.5 },
+  "løg": { pack: 1000, piece: 100, p: 1 }, "hakket oksekød": { pack: 500, p: 19 }, "spaghetti": { pack: 500, p: 12 },
+  "pasta": { pack: 500, p: 12 }, "hakkede tomater": { pack: 400, p: 1 }, "kidneybønner": { pack: 400, p: 8 },
+  "tortilla": { pack: 320, piece: 40, p: 8 }, "ost": { pack: 300, p: 25 }, "salat": { pack: 300, piece: 300, p: 1 },
+  "pesto": { pack: 190, p: 5 }, "nudler": { pack: 250, p: 10 }, "wokgrøntsager": { pack: 600, p: 2 },
+  "lasagneplader": { pack: 500, p: 12 }, "laks": { pack: 500, p: 20 }, "kartofler": { pack: 2000, p: 2 },
+  "broccoli": { pack: 400, piece: 400, p: 3 }, "hakket svinekød": { pack: 500, p: 18 }, "æg": { pack: 600, piece: 60, p: 13 },
+  "burgerboller": { pack: 240, piece: 60, p: 9 }, "pizzadej": { pack: 400, piece: 400, p: 7 }, "skinke": { pack: 150, p: 18 },
+  "tomatsauce": { pack: 400, p: 1.5 }, "bacon": { pack: 150, p: 13 }, "røde linser": { pack: 500, p: 24 },
+  "ingefær": { pack: 100, p: 2 }, "hvidløg": { pack: 150, piece: 50, p: 6 }, "yoghurt": { pack: 1000, p: 4 },
+  "agurk": { pack: 350, piece: 350, p: 1 }, "salsiccia": { pack: 400, p: 15 }, "fløde": { pack: 250, p: 2.5 },
+  "basilikum": { pack: 30, p: 3 }, "hytteost": { pack: 250, p: 12 }, "spinat": { pack: 200, p: 3 },
+  "tun": { pack: 185, piece: 130, p: 25 }, "cherrytomater": { pack: 250, p: 1 }, "rødløg": { pack: 500, piece: 100, p: 1 },
+  "skyr": { pack: 450, p: 11 }, "kalkun": { pack: 500, p: 22 }, "parmesan": { pack: 150, p: 33 },
+  "citron": { pack: 100, piece: 100, p: 1 }, "græsk yoghurt": { pack: 1000, p: 9 }, "hakket kylling": { pack: 400, p: 20 },
+  "rejer": { pack: 250, p: 20 }, "gulerødder": { pack: 1000, piece: 80, p: 1 }, "bladselleri": { pack: 400, piece: 40, p: 1 },
+  "squash": { pack: 300, piece: 300, p: 1 }, "peberfrugt": { pack: 150, piece: 150, p: 1 }, "champignon": { pack: 250, p: 3 },
+  "søde kartofler": { pack: 1000, piece: 300, p: 2 }, "majs": { pack: 340, p: 3 }, "ærter": { pack: 450, p: 5 },
+  "chili": { pack: 50, piece: 10, p: 2 }, "avocado": { pack: 150, piece: 150, p: 2 }, "mozzarella": { pack: 125, piece: 125, p: 18 },
+  "creme fraiche": { pack: 200, p: 3 }, "smør": { pack: 250, p: 1 }, "mælk": { pack: 1000, p: 3.5 },
+  "couscous": { pack: 500, p: 12 }, "bulgur": { pack: 500, p: 12 }, "pitabrød": { pack: 360, piece: 60, p: 9 },
+  "tomatpuré": { pack: 140, p: 4 }, "passata": { pack: 500, p: 1.5 }, "kikærter": { pack: 400, p: 7 },
+  "bouillon": { pack: 3000, p: 0 }, "rødvin": { pack: 750, p: 0 }, "soja": { pack: 150, p: 8 },
+  "karrypasta": { pack: 100, p: 2 }, "tacokrydderi": { pack: 30, p: 0 }, "oregano": { pack: 10, p: 0 }, "mynte": { pack: 30, p: 3 },
+};
+const UNITS = ["g", "kg", "ml", "dl", "l", "stk", "fed", "dåse", "spsk", "tsk", "håndfuld"];
+const UNIT_G = { g: 1, kg: 1000, ml: 1, dl: 100, l: 1000, spsk: 15, tsk: 5, håndfuld: 25, knivspids: 1, fed: 5 };
+// Grams of an amount: pieces and cans use the ingredient's piece weight.
+function toGrams(term, q, u) {
+  if (!(q > 0)) return 0;
+  if (UNIT_G[u]) return q * UNIT_G[u];
+  const info = ING[term] || {};
+  if (u === "dåse") return q * (info.piece || 400);
+  return q * (info.piece || info.pack || 100); // stk, bundt, …
+}
+const mealServings = (m) => +m.servings || MEAL_AMOUNTS[m.name]?.[0] || 4;
+const mealAmounts = (m) => m.amounts || MEAL_AMOUNTS[m.name]?.[1] || {};
+// Grams of one ingredient per portion, or null when the meal doesn't say how much.
+function perPortion(m, term) {
+  const a = mealAmounts(m)[term];
+  return a ? toGrams(term, a[0], a[1]) / mealServings(m) : null;
+}
+// Protein per portion; null when less than half the ingredients have an amount.
+function mealProtein(m) {
+  const terms = m.ingredients || [];
+  const known = terms.filter(t => mealAmounts(m)[t]);
+  if (!terms.length || known.length < terms.length / 2) return null;
+  return Math.round(known.reduce((s, t) => s + perPortion(m, t) * (ING[t]?.p || 0) / 100, 0));
+}
+const nice = (x) => x >= 10 ? Math.round(x) : Math.round(x * 2) / 2;
+// "1.250 g" → "1,3 kg", "0.5 stk" → "½ stk".
+function fmtAmount(q, u) {
+  if (!(q > 0)) return "";
+  if (u === "g" && q >= 1000) return `${String(Math.round(q / 100) / 10).replace(".", ",")} kg`;
+  if (u === "ml" && q >= 100) return `${String(Math.round(q / 10) / 10).replace(".", ",")} dl`;
+  if (u === "g" || u === "ml") return `${q < 100 ? Math.round(q / 5) * 5 || Math.round(q) : Math.round(q / 25) * 25} ${u}`;
+  const v = nice(q), whole = Math.floor(v), half = v - whole >= .5;
+  return `${whole || !half ? whole : ""}${half ? "½" : ""} ${u}`;
+}
+
+// Things most kitchens always have; they're never bought for a plan.
+const BASICS = ["salt", "peber", "olie", "olivenolie", "rapsolie", "sukker", "hvedemel", "eddike", "bouillon", "karry", "spidskommen", "koriander", "kardemomme", "chiliflager", "oregano", "timian", "paprika", "kanel", "muskatnød", "soja"];
+// Recipe lines like "800 g hakkede tomater på dåse" → { q: 800, u: "g", term: "hakkede tomater", line }.
+const KNOWN_TERMS = [...new Set([...Object.keys(ING), ...INGREDIENT_GROUPS.flatMap(([, l]) => l), ...BASICS])].sort((a, b) => b.length - a.length);
+const LINE_UNITS = { g: "g", gram: "g", kg: "kg", ml: "ml", dl: "dl", l: "l", liter: "l", stk: "stk", fed: "fed", dåse: "dåse", dåser: "dåse", spsk: "spsk", tsk: "tsk", håndfuld: "håndfuld", håndfulde: "håndfuld", knivspids: "knivspids", bdt: "stk", bundt: "stk", stængler: "stk", stængel: "stk", skiver: "stk", pakke: "stk", pk: "stk" };
+const SKIP_LINES = /^(salt|peber|vand|salt og (friskkværnet |sort )?peber|evt\.?)\b/;
+function parseIngredientLine(line) {
+  let s = line.toLowerCase().replace(/\(.*?\)/g, "").split(",")[0].trim();
+  const frac = { "½": .5, "¼": .25, "¾": .75 };
+  const m = s.match(/^(\d+(?:[.,]\d+)?)?\s*([½¼¾])?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*/);
+  let q = (m[1] ? parseFloat(m[1].replace(",", ".")) : 0) + (m[2] ? frac[m[2]] : 0);
+  s = s.slice(m[0].length);
+  let u = "stk";
+  const w = s.split(/\s+/)[0];
+  if (LINE_UNITS[w]) { u = LINE_UNITS[w]; s = s.slice(w.length).trim(); }
+  if (!q) { q = 0; u = "stk"; }
+  s = s.replace(/\b(frisk|friske|stødt|tørret|tørrede|finthakket|groftrevet|fintrevet|revet|koncentreret|på dåse|økologisk|små|store|stor|lille|evt\.?)\b/g, " ")
+    .replace(/\d+\s*%/g, " ").replace(/\s+/g, " ").trim();
+  if (!s || SKIP_LINES.test(s)) return null;
+  const h = " " + s;
+  const term = KNOWN_TERMS.find(t => t.split(" ").every(x => h.includes(" " + x))) || KNOWN_TERMS.find(t => t.length >= 5 && s.includes(t)) || s;
+  return { q, u, term, line };
+}
+// A recipe from the worker → a meal: duplicate ingredients in the same unit are added together.
+function mealFromRecipe(r, url) {
+  const amounts = {}, ingredients = [];
+  for (const line of r.ingredients || []) {
+    const x = parseIngredientLine(line);
+    if (!x) continue;
+    if (!ingredients.includes(x.term)) ingredients.push(x.term);
+    const a = amounts[x.term];
+    if (!x.q) continue;
+    if (!a) amounts[x.term] = [x.q, x.u];
+    else if (a[1] === x.u) a[0] += x.q;
+    else amounts[x.term] = [toGrams(x.term, ...a) + toGrams(x.term, x.q, x.u), "g"];
+  }
+  // The main ingredient (first in the plan's variety rule) is the one with the most grams.
+  ingredients.sort((a, b) => (amounts[b] ? toGrams(b, ...amounts[b]) : 0) - (amounts[a] ? toGrams(a, ...amounts[a]) : 0));
+  return { name: r.name || "Ny ret", ingredients, amounts, servings: r.servings || 4, url, image: r.image || null };
+}
+
+// Whether a pantry item covers an ingredient ("græsk yoghurt" covers "yoghurt", "olie" covers "olivenolie").
+const covers = (have, term) => have === term || (have.length >= 4 && term.endsWith(have)) || offerFits(term, have);
+// Shop walk order for the shopping list.
+const AISLES = ["Grønt", "Pasta, ris og brød", "Kød og fisk", "Mejeri og æg", "Dåser, saucer og krydderier", "Andet"];
+const aisleOf = (name) => {
+  const n = name.toLowerCase();
+  return INGREDIENT_GROUPS.find(([, l]) => l.includes(n))?.[0] || INGREDIENT_GROUPS.find(([, l]) => l.some(t => covers(t, n)))?.[0]
+    || (/kaffe|toilet|brød|bananer/.test(n) ? (/bananer/.test(n) ? "Grønt" : /brød/.test(n) ? "Pasta, ris og brød" : "Andet") : "Andet");
+};
+const packsFor = (term, g) => Math.max(1, Math.ceil(g / (ING[term]?.pack || 500) - 0.1));
+
+// What a set of meals costs. Ingredients are added up across the meals and bought in whole packs (two
+// chicken dishes of 600 g = 3 packs of 500 g); one without an amount costs a pack per meal. Weekly staples
+// count once; what's at home (pantry, or covered by a staple) costs nothing.
+function planCost(meals, staples = []) {
+  const need = {};
+  for (const m of meals) for (const i of m.items) {
+    if (i.staple || i.have) continue;
+    const x = need[i.term] ||= { term: i.term, g: 0, extra: 0, q: 0, u: i.amt?.[1], offer: i.offer, normal: i.normal };
+    if (i.per) x.g += i.per * (m.portions || 1); else x.extra += 1;
+    // Also in the recipe's own unit ("6 stk"), as long as every meal uses the same one.
+    if (i.amt && x.u === i.amt[1]) x.q += i.amt[0] * (m.portions || 1); else x.u = null;
+  }
+  const buy = [...staples.map(st => ({ ...st, g: 0, packs: 1 })), ...Object.values(need).map(x => ({ ...x, packs: (x.g ? packsFor(x.term, x.g) : 0) + x.extra }))];
+  return {
+    buy,
+    total: buy.reduce((s, x) => s + x.packs * (x.offer?.price ?? x.normal), 0),
+    normal: buy.reduce((s, x) => s + x.packs * x.normal, 0),
+  };
+}
 
 // Dinner plan built from this week's offers: for each store (and each pair of stores) pick the meals that
-// save the most there – favourites count as 20 kr. extra, so offers still decide – and price the whole shop,
-// normal-price items and the weekly staples included. The cheapest option wins; a second store must save at
-// least 25 kr. to be worth the trip.
-function planWeek(pool, offersByTerm, stores, count, staples = [], rejected = []) {
+// save the most there and price the whole shop, normal-price items and the weekly staples included. The
+// cheapest option wins; a second store must save at least 25 kr. to be worth the trip. Besides the offers,
+// a meal scores for being a favourite (20 kr.), for using what's in the fridge, for protein above 25 g a
+// portion (1 kr. per g) and for how it was rated after cooking.
+function planWeek(pool, offersByTerm, stores, count, { staples = [], rejected = [], pantry = [], portions = 3, protein = true } = {}) {
   const terms = [...new Set([...staples, ...pool.flatMap(m => m.ingredients)])];
   const best = {}, normal = {};
   for (const t of terms) {
     best[t] = {};
     normal[t] = normalPrice(t, offersByTerm[t]);
     for (const o of offersByTerm[t] || [])
-      if (stores.includes(o.store) && !best[t][o.store] && offerFits(t, o.heading) && !rejected.includes((o.heading || "").toLowerCase())) best[t][o.store] = o;
+      if (stores.includes(o.store) && !best[t][o.store] && offerFits(t, o.heading) && !rejected.includes((o.heading || "").toLowerCase())
+        && !(Date.parse(o.from) > Date.now())) best[t][o.store] = o; // next week's offers count once they start
   }
   // An ingredient a weekly staple already covers ("yoghurt" ← "græsk yoghurt") isn't bought again.
   const byStaple = (t) => !staples.includes(t) && staples.some(st => offerFits(t, st));
+  const haveOf = (t) => pantry.find(p => covers(p.term, t));
   const offerIn = (t, set) => set.map(st => best[t][st]).filter(Boolean).sort((x, y) => x.price - y.price)[0] || null;
   const evaluate = (set) => {
     const rated = pool.map(m => {
-      const items = m.ingredients.map(t => byStaple(t) ? { term: t, offer: null, normal: 0, staple: true } : { term: t, offer: offerIn(t, set), normal: normal[t] });
-      const saving = items.reduce((s, i) => s + (i.offer ? Math.max(0, i.normal - i.offer.price) : 0), 0);
-      return { mealId: m.id, name: m.name, url: m.url || null, fav: !!m.fav, items, value: saving + (m.fav ? 20 : 0) };
+      const items = m.ingredients.map(t => {
+        const per = perPortion(m, t), have = haveOf(t), a = mealAmounts(m)[t];
+        const amt = a ? [a[0] / mealServings(m), a[1]] : null; // amount per portion in the recipe's own unit
+        if (byStaple(t)) return { term: t, per, amt, offer: null, normal: 0, staple: true };
+        if (have) return { term: t, per, amt, offer: null, normal: normal[t], have: true, fresh: !have.always };
+        return { term: t, per, amt, offer: offerIn(t, set), normal: normal[t] };
+      });
+      const packs = (i) => i.per ? packsFor(i.term, i.per * portions) : 1;
+      const saving = items.reduce((s, i) => s + (i.offer ? packs(i) * Math.max(0, i.normal - i.offer.price) : 0) + (i.fresh ? i.normal + 10 : 0), 0);
+      const prot = mealProtein(m);
+      const taste = Math.max(-40, Math.min(30, 8 * (m.up || 0) - 15 * (m.down || 0)));
+      return { mealId: m.id, name: m.name, url: m.url || null, fav: !!m.fav, protein: prot, portions, items,
+        value: saving + (m.fav ? 20 : 0) + taste + (protein && prot ? Math.max(0, prot - 25) : 0) };
     }).sort((x, y) => y.value - x.value);
     // Variety: no two meals built on the same main ingredient (the first one listed, e.g. "laks").
     const meals = [], used = new Set();
@@ -803,6 +965,14 @@ function App() {
   const [ingSearch, setIngSearch] = useState(""); // index of the plan meal whose "Vælg selv" list is open
   const [foodBudgetEdit, setFoodBudgetEdit] = useState(false);
   const [showFoodTx, setShowFoodTx] = useState(false);
+  const [doneFor, setDoneFor] = useState(null);        // index of the plan meal whose "Lavet" panel is open
+  const [doneDraft, setDoneDraft] = useState({ rate: 0, note: "", freeze: 0 });
+  const [openRecipe, setOpenRecipe] = useState(null);  // name of the meal whose amounts are open
+  const [viewServings, setViewServings] = useState({});
+  const [importUrl, setImportUrl] = useState("");
+  const [importBusy, setImportBusy] = useState(null);
+  const [pantryDraft, setPantryDraft] = useState("");
+  const [freezerDraft, setFreezerDraft] = useState({ name: "", portions: 2 });
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saxoLedger, setSaxoLedger] = useState(init.saxoLedger || null);
   const [showLedger, setShowLedger] = useState(false);
@@ -966,7 +1136,7 @@ function App() {
   };
   // Offers aren't stored; fetch them for the open list whenever the shopping page is shown.
   useEffect(() => {
-    if (page === "food") shop.items.filter(i => !i.done && !offers[i.id]).forEach(loadOffers);
+    if (page === "food") shop.items.filter(i => !i.done && !i.snap && !offers[i.id]).forEach(loadOffers);
   }, [page, foodTab, shop.items.length, shop.lat, shop.lng]);
 
   const subscriptions = subscriptionsRaw.map(x => {
@@ -1970,7 +2140,7 @@ function App() {
 
   const ShopPage = () => {
     const stores = shopStores;
-    const setItems = (items) => setShop({...shop, items});
+    const setItems = (items) => setShop(s => ({...s, items}));
     const inStores = (list) => (list || []).filter(o => stores.includes(o.store));
     const load = loadOffers;
     const add = (name) => {
@@ -1980,16 +2150,26 @@ function App() {
       setItems([...shop.items, item]); setShopDraft(""); load(item);
     };
     const refreshAll = () => shop.items.filter(i => !i.done).forEach(load);
-    // Each item's chosen offer: the one the user tapped, else the best match in their stores.
-    const chosen = (item) => { const l = inStores(offers[item.id]?.list); return l.find(o => o.id === item.pick) || l.find(o => offerFits(item.name, o.heading)) || l[0] || null; };
+    // Items from the madplan carry a copy of their offer, so the list also works in the shop without net.
+    // Others: the offer the user tapped, else the best match in their stores.
+    const chosen = (item) => {
+      if (item.snap && !item.picked) return item.snap;
+      const l = inStores(offers[item.id]?.list);
+      return l.find(o => o.id === item.pick) || l.find(o => offerFits(item.name, o.heading)) || l[0] || item.snap || null;
+    };
     const groups = {};
-    for (const it of shop.items) { const o = chosen(it); const k = o ? o.store : "Uden tilbud"; (groups[k] ||= []).push({ it, o }); }
+    for (const it of shop.items) { const o = chosen(it); const k = o ? o.store : "Uden tilbud"; (groups[k] ||= []).push({ it, o, aisle: aisleOf(it.name) }); }
+    for (const g of Object.values(groups)) g.sort((x, y) => AISLES.indexOf(x.aisle) - AISLES.indexOf(y.aisle));
     const order = Object.keys(groups).sort((a, b) => (a === "Uden tilbud") - (b === "Uden tilbud") || groups[b].length - groups[a].length);
     const total = shop.items.filter(i => !i.done).reduce((s, i) => s + (chosen(i)?.price || 0), 0);
     const till = (o) => o.till ? `til ${shortDate(isoDate(new Date(o.till)))}` : "";
+    const share = async () => {
+      const text = order.map(st => `${st}\n` + groups[st].filter(x => !x.it.done).map(x => `- ${x.it.name}${x.it.qty ? ` (${x.it.qty})` : ""}`).join("\n")).join("\n\n");
+      try { if (navigator.share) await navigator.share({ title: "Indkøbsliste", text }); else { await navigator.clipboard.writeText(text); flash("shop", "Listen er kopieret."); } } catch {}
+    };
     return html`<div>
       <div className="card stack">
-        <div className="small muted">Skriv det, du mangler, så finder appen ugens tilbud i dine butikker.</div>
+        <div className="small muted">Skriv det, du mangler, eller læg madplanen på listen. Listen er sorteret efter butik og afdeling, og den virker også uden net i butikken.</div>
         <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); add(shopDraft); }}>
           <input className="input" style=${{flex:1}} value=${shopDraft} onChange=${e=>setShopDraft(e.target.value)} placeholder="Fx kaffe, kylling, pasta" aria-label="Vare" />
           <button className="btn primary" type="submit" disabled=${!shopDraft.trim()}>Tilføj</button>
@@ -1998,31 +2178,33 @@ function App() {
       </div>
 
       <div className="section">
-        <div className="section-head"><h2>Varer</h2>${shop.items.length > 0 && html`<button className="link-btn" onClick=${refreshAll}>Opdater tilbud</button>`}</div>
-        ${shop.items.length === 0 ? html`<div className="card empty">Listen er tom. Tilføj varer ovenfor.</div>` : html`
-          ${total > 0 && html`<div className="tip" style=${{marginTop:0, marginBottom:10}}><div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div><div>Varer på tilbud i alt ca. <b>${kr(Math.round(total))}</b></div></div>`}
+        <div className="section-head"><h2>Varer</h2>${shop.items.length > 0 && html`<div style=${{display:"flex", gap:14}}><button className="link-btn" onClick=${share}>Del</button><button className="link-btn" onClick=${refreshAll}>Opdater tilbud</button></div>`}</div>
+        ${shop.items.length === 0 ? html`<div className="card empty">Listen er tom. Tilføj varer ovenfor, eller tryk <b>Læg det hele på indkøbslisten</b> under Madplan.</div>` : html`
+          ${total > 0 && html`<div className="tip" style=${{marginTop:0, marginBottom:10}}><div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div><div>Det, du mangler, koster ca. <b>${kr(Math.round(total))}</b></div></div>`}
           <div className="stack-gap">${order.map(store => html`<div key=${store}>
             <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store}</div>
-            <div className="list">${groups[store].map(({ it, o }) => {
+            <div className="list">${groups[store].map(({ it, o, aisle }, k) => {
               const st = offers[it.id] || {}, alts = inStores(st.list).slice(0, 6);
-              return html`<div key=${it.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: it.done ? .5 : 1}}>
-                <input type="checkbox" style=${{width:20, height:20, marginTop:4, accentColor:"var(--accent)"}} checked=${it.done} aria-label=${`${it.name} er købt`} onChange=${()=>setItems(shop.items.map(x => x.id === it.id ? {...x, done: !x.done} : x))} />
+              const head = k === 0 || groups[store][k - 1].aisle !== aisle;
+              return html`<div key=${it.id}>${head && html`<div className="small faint" style=${{padding:"8px 14px 0"}}>${aisle}</div>`}<div className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: it.done ? .5 : 1}}>
+                <input type="checkbox" style=${{width:22, height:22, marginTop:4, accentColor:"var(--accent)"}} checked=${it.done} aria-label=${`${it.name} er købt`} onChange=${()=>setItems(shop.items.map(x => x.id === it.id ? {...x, done: !x.done} : x))} />
                 ${o?.image ? html`<img src=${o.image} alt="" loading="lazy" style=${{width:44, height:44, objectFit:"contain", borderRadius:8, background:"#fff"}} />` : null}
                 <div className="main">
-                  <div className="title" style=${{textDecoration: it.done ? "line-through" : "none"}}>${it.name}</div>
-                  <div className="sub" style=${{whiteSpace:"normal"}}>${st.loading ? "Finder tilbud…" : st.error ? st.error : o ? `${o.heading} · ${till(o)}` : st.list ? "Ingen tilbud i dine butikker lige nu" : "Tryk Opdater tilbud"}</div>
-                  ${alts.length > 1 && html`<select className="input sm" style=${{marginTop:6, maxWidth:"100%"}} aria-label=${`Vælg tilbud for ${it.name}`} value=${o?.id || ""} onChange=${e=>setItems(shop.items.map(x => x.id === it.id ? {...x, pick: e.target.value} : x))}>
+                  <div className="title" style=${{whiteSpace:"normal", textDecoration: it.done ? "line-through" : "none"}}>${it.name}${it.qty ? html` <span className="small muted" style=${{fontWeight:400}}>· ${it.qty}</span>` : null}</div>
+                  <div className="sub" style=${{whiteSpace:"normal"}}>${o?.normal ? "Normalpris (skøn)" : st.loading ? "Finder tilbud…" : st.error && !o ? st.error : o ? `${o.heading} · ${till(o)}` : st.list ? "Ingen tilbud i dine butikker lige nu" : "Tryk Opdater tilbud"}</div>
+                  ${alts.length > 1 && html`<select className="input sm" style=${{marginTop:6, maxWidth:"100%"}} aria-label=${`Vælg tilbud for ${it.name}`} value=${o?.id || ""} onChange=${e=>setItems(shop.items.map(x => x.id === it.id ? {...x, pick: e.target.value, picked: true} : x))}>
                     ${alts.map(a => html`<option key=${a.id} value=${a.id}>${a.store}: ${kr(a.price)} – ${a.heading.slice(0, 40)}</option>`)}
                   </select>`}
                 </div>
                 <div className="end">
-                  ${o && html`<div className="num" style=${{fontWeight:600}}>${kr(o.price)}</div>${o.before ? html`<div className="small faint" style=${{textDecoration:"line-through"}}>${kr(o.before)}</div>` : null}`}
+                  ${o && html`<div className="num" style=${{fontWeight:600}}>${o.normal ? "ca. " : ""}${kr(Math.round(o.price * 100) / 100)}</div>${o.before ? html`<div className="small faint" style=${{textDecoration:"line-through"}}>${kr(o.before)}</div>` : null}`}
                   <button className="link-btn small" aria-label=${`Fjern ${it.name}`} onClick=${()=>{ const prev = shop.items; setItems(shop.items.filter(x => x.id !== it.id)); showUndo(`${it.name} er fjernet`, () => setItems(prev)); }}>Fjern</button>
                 </div>
-              </div>`;
+              </div></div>`;
             })}</div>
           </div>`)}</div>
           ${shop.items.some(i => i.done) && html`<button className="btn soft block" style=${{marginTop:12}} onClick=${()=>setItems(shop.items.filter(i => !i.done))}>Ryd købte varer</button>`}`}
+        <${Msg} k="shop" />
       </div>
       ${StoresBlock()}
     </div>`;
@@ -2035,20 +2217,60 @@ function App() {
   ];
   const mealPool = allMeals.filter(m => !m.skip && m.ingredients?.length);
   const favMeals = mealPool.filter(m => m.fav);
-  const nights = Math.max(1, +shop.days || 6), cookDays = Math.max(1, +shop.cookDays || 3);
+  const nights = Math.max(1, +shop.days || 6), cookDays = Math.max(1, +shop.cookDays || 3), perNight = Math.max(1, +shop.perNight || 1);
   const staples = shop.staples ?? ["græsk yoghurt"];
+  const pantry = shop.pantry ?? BASICS.map(term => ({ term, always: true }));
+  const freezer = shop.freezer || [];
+  const freezerTotal = freezer.reduce((s, f) => s + (+f.portions || 0), 0);
+  // Templates only get a stored entry once the user changes something about them.
+  const mealPatch = (meals = [], m, patch) => {
+    const stored = meals.find(x => x.id === m.id || x.name === m.name);
+    return stored ? meals.map(x => x === stored ? {...x, ...patch} : x) : [...meals, { id: uid(), name: m.name, ingredients: m.ingredients, url: m.url || null, ...patch }];
+  };
+  const updateMeal = (m, patch) => setShop(s => ({...s, meals: mealPatch(s.meals, m, patch)}));
+
+  // #6 + #9: twice a day, look up the weekly staples (plus two probes) to spot staples on sale and new weekly offers.
+  useEffect(() => {
+    if (!navigator.onLine || Date.now() - (shop.offerCheck?.at || 0) < 6 * 3600e3) return;
+    let gone = false;
+    (async () => {
+      const watch = [...new Set([...staples, "kylling", "hakket oksekød"])].slice(0, 8);
+      const lists = await Promise.all(watch.map(t => searchOffers(t, shop).catch(() => [])));
+      if (gone) return;
+      const now = Date.now(), rejected = shop.rejected || [];
+      let newest = null; const deals = [];
+      watch.forEach((t, k) => {
+        const mine = lists[k].filter(o => shopStores.includes(o.store));
+        for (const o of mine) if (o.from && Date.parse(o.from) <= now && (!newest || Date.parse(o.from) > Date.parse(newest))) newest = o.from;
+        if (!staples.includes(t)) return;
+        const n = normalPrice(t, lists[k]);
+        const o = mine.filter(o => offerFits(t, o.heading) && !rejected.includes(o.heading.toLowerCase())).sort((a, b) => a.price - b.price)[0];
+        if (o && o.price <= n * 0.8) deals.push({ term: t, id: o.id, heading: o.heading, store: o.store, price: o.price, normal: n, till: o.till, image: o.image });
+      });
+      setShop(s => ({...s, offerCheck: { at: Date.now(), newest, deals }}));
+    })();
+    return () => { gone = true; };
+  }, [page, staples.join(","), shopStores.join(","), shop.lat]);
+  const newOffers = !!(shop.plan?.created && shop.offerCheck?.newest && isoDate(new Date(shop.offerCheck.newest)) > shop.plan.created);
+  const deals = (shop.offerCheck?.deals || []).filter(d => (!d.till || Date.parse(d.till) >= Date.now()) && !shop.items.some(i => !i.done && i.name.toLowerCase() === d.term));
+  useEffect(() => { try { newOffers ? navigator.setAppBadge?.() : navigator.clearAppBadge?.(); } catch {} }, [newOffers]);
 
   const makePlan = async () => {
     setPlanBusy(true);
     try {
+      const fromFreezer = shop.useFreezer !== false ? Math.min(freezerTotal, nights * perNight) : 0;
+      const cookNights = Math.max(0, nights - Math.floor(fromFreezer / perNight));
       const terms = [...new Set([...staples, ...mealPool.flatMap(m => m.ingredients)])];
       const lists = {};
       for (let i = 0; i < terms.length; i += 6) {
         const chunk = terms.slice(i, i + 6);
         (await Promise.all(chunk.map(offersFor))).forEach((l, k) => { lists[chunk[k]] = l; });
       }
-      const r = planWeek(mealPool, lists, shopStores, Math.ceil(nights / cookDays), staples, shop.rejected || []);
-      setShop({...shop, plan: { created: isoDate(new Date()), nights, cookDays, ...r }});
+      const r = planWeek(mealPool, lists, shopStores, Math.ceil(cookNights / cookDays),
+        { staples, rejected: shop.rejected || [], pantry, portions: cookDays * perNight, protein: shop.preferProtein !== false });
+      let left = fromFreezer; const fz = [];
+      for (const f of freezer) { if (left <= 0) break; const n = Math.min(left, +f.portions || 0); if (n) fz.push({ id: f.id, name: f.name, portions: n }); left -= n; }
+      setShop(s => ({...s, plan: { created: isoDate(new Date()), nights, cookDays, perNight, cookNights, freezer: fz, ...r }}));
     } finally { setPlanBusy(false); }
   };
 
@@ -2057,77 +2279,113 @@ function App() {
   const replaceMeal = (i, k = 0) => {
     const plan = shop.plan;
     if (!plan?.alts?.[k]) return;
-    const meals = plan.meals.slice(), next = plan.alts[k], rest = plan.alts.filter((_, j) => j !== k);
+    const meals = plan.meals.slice(), next = { ...plan.alts[k], portions: meals[i].portions }, rest = plan.alts.filter((_, j) => j !== k);
     const old = meals[i]; meals[i] = next;
     // The store comparison was for the original meals, so it no longer applies after a swap.
-    setShop({...shop, plan: {...plan, meals, alts: [...rest, old], swapped: true, ...planCost(meals, plan.staples || [])}});
+    setShop(s => ({...s, plan: {...plan, meals, alts: [...rest, old], swapped: true, ...planCost(meals, plan.staples || [])}}));
     setPickMeal(null);
+  };
+  const setPortions = (i, n) => {
+    const plan = shop.plan, meals = plan.meals.map((m, k) => k === i ? {...m, portions: n} : m);
+    setShop(s => ({...s, plan: {...plan, meals, ...planCost(meals, plan.staples || [])}}));
   };
   // "Ikke det her": buy that item at normal price instead, and never suggest that product again.
   const rejectOffer = (heading) => {
     const plan = shop.plan, h = (heading || "").toLowerCase();
     const strip = (it) => it.offer && (it.offer.heading || "").toLowerCase() === h ? { ...it, offer: null } : it;
     const meals = plan.meals.map(m => ({ ...m, items: m.items.map(strip) })), fixed = (plan.staples || []).map(strip);
-    setShop({...shop, rejected: [...new Set([...(shop.rejected || []), h])], plan: {...plan, meals, staples: fixed, ...planCost(meals, fixed)}});
+    setShop(s => ({...s, rejected: [...new Set([...(s.rejected || []), h])], plan: {...plan, meals, staples: fixed, ...planCost(meals, fixed)}}));
     flash("plan", `"${heading}" bliver ikke foreslået igen.`);
   };
   const randomMeal = (i) => { const n = shop.plan?.alts?.length || 0; if (n) replaceMeal(i, Math.floor(Math.random() * n)); };
+  // "Lavet": rate the meal, note what to change next time, freeze leftovers and use up what was in the fridge.
+  const finishMeal = (i) => {
+    const m = shop.plan.meals[i], d = doneDraft;
+    setShop(s => {
+      const base = allMeals.find(x => x.name === m.name) || { name: m.name, ingredients: m.items.map(x => x.term) };
+      const stored = (s.meals || []).find(x => x.name === m.name) || {};
+      const note = d.note.trim();
+      const patch = { up: (stored.up || 0) + (d.rate > 0 ? 1 : 0), down: (stored.down || 0) + (d.rate < 0 ? 1 : 0),
+        notes: note ? [...(stored.notes || []), { date: isoDate(new Date()), text: note }] : stored.notes || [] };
+      const usedFresh = m.items.filter(x => x.fresh).map(x => x.term);
+      const pantryNow = (s.pantry ?? pantry).filter(p => p.always || !usedFresh.some(t => covers(p.term, t)));
+      const freezerNow = d.freeze > 0 ? [...(s.freezer || []), { id: uid(), name: m.name, portions: d.freeze, date: isoDate(new Date()) }] : s.freezer || [];
+      const meals = s.plan.meals.map((x, k) => k === i ? {...x, done: true, rate: d.rate} : x);
+      return {...s, meals: mealPatch(s.meals, base, patch), pantry: pantryNow, freezer: freezerNow, plan: {...s.plan, meals}};
+    });
+    setDoneFor(null);
+    flash("plan", d.freeze > 0 ? `${m.name} er gemt, og ${d.freeze} portioner ligger i fryseren.` : `${m.name} er gemt.`);
+  };
+  const stepper = (label, value, min, max, onSet) => html`<div style=${{display:"flex", alignItems:"center", gap:10}}>
+    <span className="small" style=${{flex:1}}>${label}</span>
+    <button className="icon-btn" aria-label=${`${label}: færre`} disabled=${value <= min} onClick=${()=>onSet(value - 1)}>−</button>
+    <span className="num" style=${{minWidth:22, textAlign:"center", fontWeight:600}}>${value}</span>
+    <button className="icon-btn" aria-label=${`${label}: flere`} disabled=${value >= max} onClick=${()=>onSet(value + 1)}>+</button>
+  </div>`;
+  const proteinChip = (p) => p == null ? null : html` <span className=${"chip " + (p >= 30 ? "info" : "")} style=${{fontSize:11, padding:"1px 7px", ...(p >= 30 ? {} : {border:"1px solid var(--border)"})}}>${p >= 30 ? "Proteinrig · " : ""}${p} g protein</span>`;
+  const amountOf = (it, portions) => it.amt ? fmtAmount(it.amt[0] * portions, it.amt[1]) : it.per ? fmtAmount(it.per * portions, "g") : "";
+  const qtyText = (b) => `${b.packs} ${b.packs === 1 ? "pakke" : "pakker"}${b.u && b.q ? ` · ${fmtAmount(b.q, b.u)}` : b.g ? ` · ca. ${fmtAmount(b.g, "g")}` : ""}`;
 
   const PlanTab = () => {
     const plan = shop.plan;
     const span = (i) => {
       if (!plan) return "";
-      const start = new Date(plan.created + "T12:00:00");
-      const from = i * plan.cookDays, to = Math.min(from + plan.cookDays, plan.nights) - 1;
+      const start = new Date(plan.created + "T12:00:00"), last = (plan.cookNights ?? plan.nights) - 1;
+      const from = i * plan.cookDays, to = Math.min(from + plan.cookDays - 1, last);
       const day = (n) => WEEKDAYS[(start.getDay() + n) % 7].slice(0, 3);
-      return from === to ? day(from) : `${day(from)}–${day(to)}`;
+      return from >= to ? day(from) : `${day(from)}–${day(to)}`;
     };
-    const old = plan && !plan.compare; // a plan made before prices were compared
+    const old = plan && !plan.buy; // a plan made before amounts and packs
     const shopping = {};
-    if (plan && !old) for (const it of [...(plan.staples || []), ...plan.meals.flatMap(m => m.items)].filter(it => !it.staple)) {
-      const key = it.offer ? it.offer.store : "Normalpris";
-      (shopping[key] ||= {})[it.term] ||= it;
-    }
+    if (plan && !old) for (const b of plan.buy) (shopping[b.offer ? b.offer.store : "Normalpris"] ||= []).push(b);
     const addToList = () => {
       const have = new Set(shop.items.map(i => i.name.toLowerCase()));
-      const add = Object.values(shopping).flatMap(g => Object.values(g)).filter(it => !have.has(it.term.toLowerCase()))
-        .map(it => ({ id: uid(), name: it.term, done: false, pick: it.offer?.id || null }));
-      setShop({...shop, items: [...shop.items, ...add]});
-      // Reuse the offers the plan already fetched, so the list doesn't search the same words again.
-      setOffers(m => ({...m, ...Object.fromEntries(add.filter(a => termOffers[a.name]).map(a => [a.id, { list: termOffers[a.name] }]))}));
+      const add = plan.buy.filter(b => !have.has(b.term.toLowerCase())).map(b => ({
+        id: uid(), name: b.term, done: false, pick: b.offer?.id || null, qty: qtyText(b),
+        snap: b.offer ? { id: b.offer.id, store: b.offer.store, price: b.offer.price * b.packs, heading: b.offer.heading, image: b.offer.image, till: b.offer.till }
+          : { store: plan.stores[0], price: b.normal * b.packs, heading: "Normalpris", normal: true },
+      }));
+      setShop(s => ({...s, items: [...s.items, ...add]}));
       flash("plan", add.length ? `${add.length} varer lagt på indkøbslisten.` : "Alle varerne står allerede på listen.");
     };
-    const stepper = (label, value, min, max, key) => html`<div style=${{display:"flex", alignItems:"center", gap:10}}>
-      <span className="small" style=${{flex:1}}>${label}</span>
-      <button className="icon-btn" aria-label=${`${label}: færre`} disabled=${value <= min} onClick=${()=>setShop({...shop, [key]: value - 1})}>−</button>
-      <span className="num" style=${{minWidth:22, textAlign:"center", fontWeight:600}}>${value}</span>
-      <button className="icon-btn" aria-label=${`${label}: flere`} disabled=${value >= max} onClick=${()=>setShop({...shop, [key]: value + 1})}>+</button>
-    </div>`;
+    // What the card actually paid for food since the plan was made, against what the plan expected.
+    const bought = plan && !old ? transactions.filter(t => t.category === FOOD_CAT && !t.trip && t.amount < 0 && t.date >= plan.created && t.date <= addDays(plan.created, plan.nights)) : [];
+    const spent = -bought.reduce((s, t) => s + t.amount, 0);
+    const chip = (it, portions) => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border: `1px ${it.have || it.staple ? "dashed" : "solid"} var(--border)`}}>${it.term}${amountOf(it, portions) ? ` ${amountOf(it, portions)}` : ""}${it.staple ? " · fast vare" : it.have ? " · har" : it.offer ? " · tilbud" : ""}</span>`;
     return html`<div>
+      ${newOffers && html`<div className="tip tap" style=${{marginTop:0, marginBottom:12}} onClick=${makePlan}>
+        <div className="sq sm" style=${{background:"var(--info-bg, var(--pos-bg))", color:"var(--info, var(--pos))"}}><${Icon} name="cart" /></div>
+        <div>Der er kommet <b>nye tilbudsaviser</b> siden din madplan. Tryk her for at lave en ny.</div></div>`}
       <div className="card stack">
-        <div className="small muted">Aftensmad ud fra ugens tilbud. Dine ♥-retter vælges oftere, og retter du har slået fra under Retter, kommer ikke med.</div>
-        ${stepper("Aftener", nights, 1, 14, "days")}
-        ${stepper("Dage pr. ret", cookDays, 1, 5, "cookDays")}
-        <div className="small faint">${Math.ceil(nights / cookDays)} retter, der hver rækker til ${cookDays} ${cookDays === 1 ? "aften" : "aftener"}.</div>
+        <div className="small muted">Aftensmad ud fra ugens tilbud. Dine ♥-retter og dem, du har givet 👍, vælges oftere. Det, du har hjemme, bruges først.</div>
+        ${stepper("Aftener", nights, 1, 14, v => setShop(s => ({...s, days: v})))}
+        ${stepper("Dage pr. ret", cookDays, 1, 5, v => setShop(s => ({...s, cookDays: v})))}
+        ${stepper("Portioner pr. aften", perNight, 1, 6, v => setShop(s => ({...s, perNight: v})))}
+        <div className="small faint">Hver ret laves til ${cookDays * perNight} ${cookDays * perNight === 1 ? "portion" : "portioner"}.${freezerTotal > 0 && shop.useFreezer !== false ? ` ${freezerTotal} ${freezerTotal === 1 ? "portion" : "portioner"} fra fryseren bruges først.` : ""}</div>
+        <label style=${{display:"flex", alignItems:"center", gap:10}} className="small">
+          <input type="checkbox" style=${{width:20, height:20, accentColor:"var(--accent)"}} checked=${shop.preferProtein !== false} onChange=${e=>setShop(s => ({...s, preferProtein: e.target.checked}))} />
+          Vælg helst proteinrige retter
+        </label>
         <div>
           <div className="small" style=${{marginBottom:6}}>Faste varer hver uge</div>
           <div style=${{display:"flex", flexWrap:"wrap", gap:6, alignItems:"center"}}>
-            ${staples.map(t => html`<button key=${t} className="chip info" aria-label=${`Fjern ${t} fra faste varer`} onClick=${()=>setShop({...shop, staples: staples.filter(x => x !== t)})}>${t} ✕</button>`)}
-            <form style=${{display:"flex", gap:6}} onSubmit=${e=>{ e.preventDefault(); const t = stapleDraft.trim().toLowerCase(); if (t && !staples.includes(t)) setShop({...shop, staples: [...staples, t]}); setStapleDraft(""); }}>
+            ${staples.map(t => html`<button key=${t} className="chip info" aria-label=${`Fjern ${t} fra faste varer`} onClick=${()=>setShop(s => ({...s, staples: staples.filter(x => x !== t)}))}>${t} ✕</button>`)}
+            <form style=${{display:"flex", gap:6}} onSubmit=${e=>{ e.preventDefault(); const t = stapleDraft.trim().toLowerCase(); if (t && !staples.includes(t)) setShop(s => ({...s, staples: [...staples, t], offerCheck: null})); setStapleDraft(""); }}>
               <input className="input sm" style=${{width:130}} value=${stapleDraft} onChange=${e=>setStapleDraft(e.target.value)} placeholder="+ fx skyr" aria-label="Tilføj fast vare" />
             </form>
           </div>
         </div>
-        ${(shop.rejected || []).length > 0 && html`<div className="small faint">${shop.rejected.length} tilbud er fravalgt. <button className="link-btn small" onClick=${()=>setShop({...shop, rejected: []})}>Nulstil</button></div>`}
+        ${(shop.rejected || []).length > 0 && html`<div className="small faint">${shop.rejected.length} tilbud er fravalgt. <button className="link-btn small" onClick=${()=>setShop(s => ({...s, rejected: []}))}>Nulstil</button></div>`}
         <button className="btn primary block" disabled=${planBusy || !mealPool.length} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : plan ? "Lav ny madplan" : "Lav madplan"}</button>
       </div>
 
       ${plan && !old && html`<div>
         <div className="tip" style=${{marginTop:12}}>
           <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div>
-          <div>Gå i <b>${plan.stores.join(" og ")}</b>. Indkøbet koster ca. <b>${kr(Math.round(plan.total))}</b>${plan.normal > plan.total ? html` – du sparer ca. <b className="pos">${kr(Math.round(plan.normal - plan.total))}</b> mod normalpris` : ""}</div>
+          <div>${plan.meals.length ? html`Gå i <b>${plan.stores.join(" og ")}</b>. Indkøbet koster ca. <b>${kr(Math.round(plan.total))}</b>${plan.normal > plan.total ? html` – du sparer ca. <b className="pos">${kr(Math.round(plan.normal - plan.total))}</b> mod normalpris` : ""}` : "Fryseren rækker til alle aftenerne – du skal ikke købe ind til aftensmad."}</div>
         </div>
-        ${plan.swapped && html`<div className="small faint" style=${{margin:"8px 2px 0"}}>Du har byttet retter. Tryk <b>Lav ny madplan</b> for at sammenligne butikkerne igen.</div>`}
+        ${bought.length > 0 && html`<div className="small" style=${{margin:"8px 2px 0"}}>Siden ${shortDate(plan.created)} har du købt mad for <b className=${spent > plan.total * 1.15 ? "neg" : ""}>${fmt(spent)}</b> (${bought.length} køb) – planen regnede med ca. ${fmt(Math.round(plan.total))}.</div>`}
+        ${plan.swapped && html`<div className="small faint" style=${{margin:"8px 2px 0"}}>Du har ændret planen. Tryk <b>Lav ny madplan</b> for at sammenligne butikkerne igen.</div>`}
         ${plan.compare?.length > 1 && !plan.swapped && html`<div className="card" style=${{marginTop:8}}>
           <div className="small muted" style=${{marginBottom:6}}>Hele indkøbet inkl. varer til normalpris</div>
           <div className="stack" style=${{gap:4}}>${plan.compare.map((c, i) => html`<div key=${i} style=${{display:"flex", justifyContent:"space-between", gap:12, fontWeight: i === 0 ? 600 : 400}}>
@@ -2139,61 +2397,97 @@ function App() {
           <div className="list">${plan.staples?.length > 0 && html`<div className="row" style=${{alignItems:"flex-start"}}>
             <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>Fast</div>
             <div className="main"><div style=${{display:"flex", flexWrap:"wrap", gap:4}}>${plan.staples.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div></div>
-          </div>`}${plan.meals.map((m, i) => html`<div key=${i} className="row" style=${{alignItems:"flex-start"}}>
+          </div>`}${plan.meals.map((m, i) => {
+            const rec = allMeals.find(x => x.name === m.name), lastNote = rec?.notes?.[rec.notes.length - 1];
+            return html`<div key=${i} className="row" style=${{alignItems:"flex-start", opacity: m.done ? .6 : 1}}>
             <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}</div>
             <div className="main">
-              <div className="title" style=${{whiteSpace:"normal"}}>${m.fav ? "♥ " : ""}${m.name}${PROTEIN_MEALS.has(m.name) && html` <span className="chip info" style=${{fontSize:11, padding:"1px 7px"}}>Proteinrig</span>`}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
-              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.staple ? "fast vare" : it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div>
-              ${plan.alts?.length > 0 && html`<div style=${{display:"flex", flexWrap:"wrap", gap:14, marginTop:6}}>
-                <button className="link-btn small" onClick=${()=>replaceMeal(i)}>Byt</button>
+              <div className="title" style=${{whiteSpace:"normal"}}>${m.done ? "✓ " : m.fav ? "♥ " : ""}${m.name}${proteinChip(m.protein)}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
+              <div className="small muted" style=${{marginTop:2}}>${m.portions} portioner${m.done ? ` · lavet${m.rate > 0 ? " 👍" : m.rate < 0 ? " 👎" : ""}` : ""}</div>
+              ${lastNote && html`<div className="small" style=${{marginTop:4}}>📝 Næste gang: ${lastNote.text}</div>`}
+              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => chip(it, m.portions))}</div>
+              ${!m.done && html`<div style=${{display:"flex", flexWrap:"wrap", gap:14, marginTop:6, alignItems:"center"}}>
+                ${plan.alts?.length > 0 && html`<button className="link-btn small" onClick=${()=>replaceMeal(i)}>Byt</button>
                 <button className="link-btn small" onClick=${()=>randomMeal(i)}>Tilfældig</button>
-                <button className="link-btn small" aria-expanded=${pickMeal === i} onClick=${()=>setPickMeal(pickMeal === i ? null : i)}>${pickMeal === i ? "Luk" : "Vælg selv"}</button>
+                <button className="link-btn small" aria-expanded=${pickMeal === i} onClick=${()=>setPickMeal(pickMeal === i ? null : i)}>${pickMeal === i ? "Luk" : "Vælg selv"}</button>`}
+                <span style=${{display:"inline-flex", alignItems:"center", gap:4}}>
+                  <button className="icon-btn" style=${{width:30, height:30}} aria-label="Færre portioner" disabled=${m.portions <= 1} onClick=${()=>setPortions(i, m.portions - 1)}>−</button>
+                  <span className="small num">${m.portions} port.</span>
+                  <button className="icon-btn" style=${{width:30, height:30}} aria-label="Flere portioner" disabled=${m.portions >= 16} onClick=${()=>setPortions(i, m.portions + 1)}>+</button>
+                </span>
+                <button className="link-btn small" aria-expanded=${doneFor === i} onClick=${()=>{ setDoneFor(doneFor === i ? null : i); setDoneDraft({ rate: 0, note: "", freeze: Math.max(0, m.portions - plan.cookDays * (plan.perNight || 1)) }); }}>${doneFor === i ? "Luk" : "Lavet ✓"}</button>
+              </div>`}
+              ${doneFor === i && html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
+                <div className="small">Hvordan var den?</div>
+                <div style=${{display:"flex", gap:8}}>
+                  <button className=${"chip " + (doneDraft.rate > 0 ? "pos" : "")} style=${doneDraft.rate > 0 ? {} : {border:"1px solid var(--border)"}} aria-pressed=${doneDraft.rate > 0} onClick=${()=>setDoneDraft({...doneDraft, rate: doneDraft.rate > 0 ? 0 : 1})}>👍 Lav den igen</button>
+                  <button className=${"chip " + (doneDraft.rate < 0 ? "neg" : "")} style=${doneDraft.rate < 0 ? {} : {border:"1px solid var(--border)"}} aria-pressed=${doneDraft.rate < 0} onClick=${()=>setDoneDraft({...doneDraft, rate: doneDraft.rate < 0 ? 0 : -1})}>👎 Sjældnere</button>
+                </div>
+                <input className="input sm" value=${doneDraft.note} onChange=${e=>setDoneDraft({...doneDraft, note: e.target.value})} placeholder="Næste gang: fx mere chili, dobbelt op på kylling" aria-label="Note til næste gang" />
+                ${stepper("Portioner i fryseren", doneDraft.freeze, 0, m.portions, v => setDoneDraft({...doneDraft, freeze: v}))}
+                ${m.items.some(x => x.fresh) && html`<div className="small faint">${m.items.filter(x => x.fresh).map(x => x.term).join(", ")} fjernes fra "Har lige nu".</div>`}
+                <button className="btn primary" onClick=${()=>finishMeal(i)}>Gem</button>
               </div>`}
               ${pickMeal === i && html`<div className="list" style=${{marginTop:8}}>${plan.alts
                 .map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length }))
                 .sort((x, y) => (y.a.fav - x.a.fav) || x.a.name.localeCompare(y.a.name, "da"))
                 .map(({ a, k, hits }) => html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:44}} onClick=${()=>replaceMeal(i, k)}>
-                  <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div></div>
+                  <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div>${a.protein != null && html`<div className="sub">${a.protein} g protein</div>`}</div>
                   <div className=${"end small " + (hits ? "pos" : "muted")}>${hits}/${a.items.length} på tilbud</div>
                 </button>`)}</div>`}
             </div>
-          </div>`)}</div>
+          </div>`; })}${plan.freezer?.length > 0 && html`<div className="row" style=${{alignItems:"flex-start"}}>
+            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>Fryser</div>
+            <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${plan.freezer.map(f => `${f.portions}× ${f.name}`).join(", ")}</div><div className="sub" style=${{whiteSpace:"normal"}}>Tryk <b>Spist én</b> under Hjemme, når du tager en portion.</div></div>
+          </div>`}</div>
         </div>
 
-        <div className="section">
+        ${plan.buy.length > 0 && html`<div className="section">
           <div className="section-head"><h2>Det skal du købe</h2></div>
           <div className="stack-gap">${Object.entries(shopping).sort(([x], [y]) => (x === "Normalpris") - (y === "Normalpris")).map(([store, items]) => html`<div key=${store}>
             <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store === "Normalpris" ? `Normalpris – køb i ${plan.stores[0]}` : `${store} – tilbud`}</div>
-            <div className="list">${Object.values(items).map(it => html`<div key=${it.term} className="row" style=${{minHeight:48}}>
+            <div className="list">${items.map(it => html`<div key=${it.term} className="row" style=${{minHeight:48}}>
               ${it.offer?.image ? html`<img src=${it.offer.image} alt="" loading="lazy" style=${{width:36, height:36, objectFit:"contain", borderRadius:6, background:"#fff"}} />` : null}
-              <div className="main"><div className="title">${it.term}</div>${it.offer && html`<div className="sub" style=${{whiteSpace:"normal"}}>${it.offer.heading}</div>`}</div>
-              <div className="end"><div className="num">${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</div>
+              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${it.term} <span className="small muted" style=${{fontWeight:400}}>· ${qtyText(it)}</span></div>${it.offer && html`<div className="sub" style=${{whiteSpace:"normal"}}>${it.offer.heading}${it.packs > 1 ? ` · ${kr(it.offer.price)} stk.` : ""}</div>`}</div>
+              <div className="end"><div className="num">${it.offer ? kr(Math.round(it.offer.price * it.packs * 100) / 100) : `ca. ${kr(it.normal * it.packs)}`}</div>
                 ${it.offer && html`<button className="link-btn small" onClick=${()=>rejectOffer(it.offer.heading)}>Ikke det her</button>`}</div>
             </div>`)}</div>
           </div>`)}</div>
-          <div className="small faint" style=${{marginTop:8}}>Normalpriser er skøn eller tilbudsavisens førpris. Hver ret regnes med sine egne pakker; listen viser hver vare én gang.</div>
+          <div className="small faint" style=${{marginTop:8}}>Mængderne lægges sammen på tværs af retterne og rundes op til hele pakker (pakkestørrelser og normalpriser er skøn). Det, du har hjemme, er trukket fra.</div>
           <button className="btn soft block" style=${{marginTop:12}} onClick=${addToList}><${Icon} name="plus" /> Læg det hele på indkøbslisten</button>
-          <${Msg} k="plan" />
-        </div>
+        </div>`}
+        <${Msg} k="plan" />
       </div>`}
       ${old && html`<div className="card empty" style=${{marginTop:12}}>Madplanen er lavet om. Tryk <b>Lav ny madplan</b>.</div>`}
       ${StoresBlock()}
     </div>`;
   };
 
+  const importRecipe = async (url, into) => {
+    const u = (url || "").trim();
+    if (!/^https?:\/\//.test(u)) { flash("meals", "Fejl: indsæt hele linket, fx https://www.valdemarsro.dk/dhal/"); return; }
+    setImportBusy(into?.name || "new");
+    try {
+      const r = await callBridge("/recipe", { url: u });
+      const m = mealFromRecipe(r, u);
+      if (!m.ingredients.length) throw new Error("Fandt ingen ingredienser i opskriften.");
+      if (into) updateMeal(into, { ingredients: m.ingredients, amounts: m.amounts, servings: m.servings, url: u });
+      else setShop(s => ({...s, meals: [...(s.meals || []), { id: uid(), fav: true, ...m, name: allMeals.some(x => x.name === m.name) ? `${m.name} (ny)` : m.name }]}));
+      flash("meals", `${into ? "Opdateret" : "Tilføjet"}: ${m.name} – ${m.ingredients.length} ingredienser til ${m.servings} portioner. Tjek dem under Mængder.`, 8000);
+      setImportUrl(""); setOpenRecipe(into?.name || m.name);
+    } catch (e) { flash("meals", "Fejl: " + (e.message || e), 9000); }
+    finally { setImportBusy(null); }
+  };
+
   const MealsTab = () => {
     const meals = shop.meals || [];
     const parse = (txt) => txt.split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
-    // Templates only get a stored entry once the user changes something about them.
-    const update = (m, patch) => {
-      const stored = meals.find(x => x.id === m.id || x.name === m.name);
-      setShop({...shop, meals: stored ? meals.map(x => x === stored ? {...x, ...patch} : x) : [...meals, { id: uid(), name: m.name, ingredients: m.ingredients, url: m.url || null, ...patch }]});
-    };
+    const update = updateMeal;
     const addOwn = () => {
       const name = mealDraft.name.trim(), ingredients = parse(mealDraft.ingredients);
       if (!name || !ingredients.length) return;
       const url = /^https?:\/\//.test(mealDraft.url.trim()) ? mealDraft.url.trim() : null;
-      setShop({...shop, meals: [...meals, { id: uid(), name, ingredients, fav: true, url }]}); setMealDraft({ name: "", ingredients: "", url: "" });
+      setShop(s => ({...s, meals: [...(s.meals || []), { id: uid(), name, ingredients, fav: true, url }]})); setMealDraft({ name: "", ingredients: "", url: "" });
     };
     const IngredientPicker = (m) => {
       const have = new Set(m.ingredients);
@@ -2212,13 +2506,41 @@ function App() {
         ${groups.map(([g, list]) => html`<div key=${g}><div className="small muted" style=${{marginBottom:5}}>${g}</div><div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${list.map(chip)}</div></div>`)}
       </div>`;
     };
+    // Amounts, scaled to the number of portions shown; an edited number is stored for the recipe's own servings.
+    const RecipeView = (m) => {
+      const base = mealServings(m), view = viewServings[m.name] || base, k = view / base, am = mealAmounts(m), prot = mealProtein(m);
+      const setAmt = (t, q, u) => update(m, { servings: base, amounts: {...am, [t]: [q / k, u]} });
+      return html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
+        ${stepper("Portioner", view, 1, 16, v => setViewServings({...viewServings, [m.name]: v}))}
+        ${prot != null && html`<div className="small">ca. <b>${prot} g protein</b> pr. portion</div>`}
+        <div className="stack" style=${{gap:6}}>${m.ingredients.map(t => html`<div key=${t} style=${{display:"flex", alignItems:"center", gap:6}}>
+          <span className="small" style=${{flex:1, minWidth:0}}>${t}</span>
+          <input key=${t + view + (am[t] || []).join()} className="input sm" style=${{width:72, textAlign:"right"}} inputMode="decimal" defaultValue=${am[t] ? String(nice(am[t][0] * k)).replace(".", ",") : ""} placeholder="?" aria-label=${`Mængde ${t}`}
+            onKeyDown=${e=>{ if (e.key === "Enter") e.target.blur(); }}
+            onBlur=${e=>{ const v = parseFloat(e.target.value.replace(",", ".")); if (v > 0 && v !== nice((am[t]?.[0] || 0) * k)) setAmt(t, v, am[t]?.[1] || "g"); }} />
+          <select className="input sm" style=${{width:92}} value=${am[t]?.[1] || "g"} aria-label=${`Enhed ${t}`} onChange=${e=>setAmt(t, (am[t]?.[0] || 0) * k, e.target.value)}>
+            ${UNITS.map(u => html`<option key=${u} value=${u}>${u}</option>`)}</select>
+        </div>`)}</div>
+        <div className="small faint">Mængderne er til ${view} ${view === 1 ? "portion" : "portioner"}. Ret et tal, så gemmes det.${m.url && !m.amounts ? "" : ""}</div>
+        ${m.url && html`<button className="btn soft" disabled=${!!importBusy} onClick=${()=>importRecipe(m.url, m)}>${importBusy === m.name ? "Henter…" : m.amounts ? "Hent mængder fra opskriften igen" : "Hent mængder fra opskriften"}</button>`}
+        ${m.notes?.length > 0 && html`<div><div className="small muted" style=${{marginBottom:4}}>Dine noter</div>${m.notes.slice(-5).reverse().map((n, j) => html`<div key=${j} className="small">📝 ${shortDate(n.date)}: ${n.text}</div>`)}</div>`}
+      </div>`;
+    };
     return html`<div>
-      <div className="small muted" style=${{margin:"0 2px 10px"}}>♥ = vælges oftere. <b>Gider ikke</b> = kommer aldrig med i madplanen. Tryk ✕ for at fjerne en ingrediens og <b>+ Ingrediens</b> for at tilføje – de bruges til at finde tilbud.</div>
+      <div className="card stack" style=${{marginBottom:12}}>
+        <div className="small muted">Hent en opskrift fra et link (fx Valdemarsro). Appen laver retten med ingredienser og mængder.</div>
+        <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); importRecipe(importUrl); }}>
+          <input className="input" style=${{flex:1}} type="url" value=${importUrl} onChange=${e=>setImportUrl(e.target.value)} placeholder="https://www.valdemarsro.dk/…" aria-label="Link til opskrift" />
+          <button className="btn primary" type="submit" disabled=${!importUrl.trim() || !!importBusy}>${importBusy === "new" ? "Henter…" : "Hent"}</button>
+        </form>
+        <${Msg} k="meals" />
+      </div>
+      <div className="small muted" style=${{margin:"0 2px 10px"}}>♥ = vælges oftere. <b>Gider ikke</b> = kommer aldrig med i madplanen. Tryk ✕ for at fjerne en ingrediens, <b>+ Ingrediens</b> for at tilføje og <b>Mængder</b> for gram og portioner.</div>
       <div className="list">${allMeals.map(m => html`<div key=${m.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: m.skip ? .45 : 1}}>
         <button className="icon-btn" style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name}: yndlingsret`} disabled=${m.skip}
           onClick=${()=>update(m, { fav: !m.fav })}>${m.fav ? "♥" : "♡"}</button>
         <div className="main">
-          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${PROTEIN_MEALS.has(m.name) && html` <span className="chip info" style=${{fontSize:11, padding:"1px 7px"}}>Proteinrig</span>`}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
+          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${proteinChip(mealProtein(m))}${(m.up || m.down) ? html` <span className="small muted" style=${{fontWeight:400}}>${m.up ? ` 👍${m.up}` : ""}${m.down ? ` 👎${m.down}` : ""}</span>` : null}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
           ${m.skip
             ? html`<div className="sub">Kommer ikke med i madplanen</div>`
             : html`<div style=${{display:"flex", flexWrap:"wrap", gap:5, marginTop:6}}>
@@ -2226,11 +2548,13 @@ function App() {
                   onClick=${()=>{ if (m.ingredients.length > 1) update(m, { ingredients: m.ingredients.filter(x => x !== t) }); }}>${t}${m.ingredients.length > 1 ? " ✕" : ""}</button>`)}
                 <button className="chip info" aria-expanded=${ingFor === m.name} onClick=${()=>{ setIngFor(ingFor === m.name ? null : m.name); setIngSearch(""); }}>${ingFor === m.name ? "Færdig" : "+ Ingrediens"}</button>
               </div>
-              ${ingFor === m.name && IngredientPicker(m)}`}
+              ${ingFor === m.name && IngredientPicker(m)}
+              ${openRecipe === m.name && RecipeView(m)}`}
         </div>
         <div className="end" style=${{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
+          ${!m.skip && html`<button className="link-btn small" aria-expanded=${openRecipe === m.name} onClick=${()=>setOpenRecipe(openRecipe === m.name ? null : m.name)}>${openRecipe === m.name ? "Luk" : "Mængder"}</button>`}
           <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
-          ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop({...shop, meals: meals.filter(x => x.id !== m.id)}); showUndo(`${m.name} er slettet`, () => setShop({...shop, meals: prev})); }}>Slet</button>`}
+          ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop(s => ({...s, meals: (s.meals || []).filter(x => x.id !== m.id)})); showUndo(`${m.name} er slettet`, () => setShop(s => ({...s, meals: prev}))); }}>Slet</button>`}
         </div>
       </div>`)}</div>
       <div className="section">
@@ -2240,6 +2564,60 @@ function App() {
           <input className="input" placeholder="Ingredienser adskilt af komma, fx hakket svinekød, ris, karry" value=${mealDraft.ingredients} onChange=${e=>setMealDraft({...mealDraft, ingredients: e.target.value})} aria-label="Ingredienser" />
           <input className="input" type="url" placeholder="Link til opskriften (valgfrit)" value=${mealDraft.url} onChange=${e=>setMealDraft({...mealDraft, url: e.target.value})} aria-label="Link til opskriften" />
           <button className="btn primary" disabled=${!mealDraft.name.trim() || !parse(mealDraft.ingredients).length} onClick=${addOwn}>Tilføj ret</button>
+        </div>
+      </div>
+    </div>`;
+  };
+
+  // What's at home: the fridge/cupboard (used first by the plan, never bought) and the freezer.
+  const HomeTab = () => {
+    const setPantry = (p) => setShop(s => ({...s, pantry: p}));
+    const addP = (t, always) => { const v = t.trim().toLowerCase(); if (v) setPantry([...pantry.filter(p => p.term !== v), { term: v, always }]); setPantryDraft(""); };
+    const q = pantryDraft.trim().toLowerCase();
+    const quick = ["løg", "hvidløg", "kartofler", "ris", "pasta", "æg", "ost", "gulerødder", "fløde", "hakkede tomater", "spinat", "citron", "kokosmælk", "røde linser"];
+    const sugg = (q ? KNOWN_TERMS.filter(t => t.includes(q)) : quick).filter(t => !pantry.some(p => p.term === t)).slice(0, 12);
+    const now = pantry.filter(p => !p.always), always = pantry.filter(p => p.always);
+    const setFreezer = (f) => setShop(s => ({...s, freezer: f}));
+    const pchip = (p) => html`<button key=${p.term} className=${"chip " + (p.always ? "" : "info")} style=${p.always ? {border:"1px solid var(--border)"} : {}} aria-label=${`Fjern ${p.term}`} onClick=${()=>setPantry(pantry.filter(x => x !== p))}>${p.term} ✕</button>`;
+    return html`<div>
+      <div className="card stack">
+        <div><div style=${{fontWeight:600}}>Har lige nu</div>
+          <div className="small muted">Madplanen vælger helst retter, der bruger det, og det kommer ikke på indkøbslisten. Det forsvinder herfra, når du trykker <b>Lavet ✓</b> på retten.</div></div>
+        <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${now.length ? now.map(pchip) : html`<span className="small faint">Intet endnu.</span>`}</div>
+        <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); addP(pantryDraft, false); }}>
+          <input className="input" style=${{flex:1}} value=${pantryDraft} onChange=${e=>setPantryDraft(e.target.value)} placeholder="Fx halv pose ris, løg" aria-label="Det har jeg" />
+          <button className="btn primary" type="submit" disabled=${!q}>Tilføj</button>
+        </form>
+        <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${sugg.map(t => html`<button key=${t} className="chip info" onClick=${()=>addP(t, false)}>+ ${t}</button>`)}</div>
+        ${q && html`<button className="link-btn small" style=${{alignSelf:"flex-start"}} onClick=${()=>addP(pantryDraft, true)}>Læg "${q}" under Har altid i stedet</button>`}
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Fryseren</h2>${freezerTotal > 0 && html`<span className="small faint">${freezerTotal} portioner</span>`}</div>
+        ${freezer.length === 0 ? html`<div className="card empty">Tom. Når du trykker <b>Lavet ✓</b> på en ret, kan du lægge portioner i fryseren.</div>` : html`<div className="list">${freezer.map(f => html`<div key=${f.id} className="row" style=${{minHeight:52}}>
+          <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${f.name}</div><div className="sub">${f.portions} ${f.portions === 1 ? "portion" : "portioner"}${f.date ? ` · frosset ${shortDate(f.date)}` : ""}</div></div>
+          <div className="end" style=${{display:"flex", gap:12, alignItems:"center"}}>
+            <button className="link-btn small" onClick=${()=>setFreezer(f.portions > 1 ? freezer.map(x => x.id === f.id ? {...x, portions: x.portions - 1} : x) : freezer.filter(x => x.id !== f.id))}>Spist én</button>
+            <button className="icon-btn" style=${{width:30, height:30}} aria-label=${`Én portion mere ${f.name}`} onClick=${()=>setFreezer(freezer.map(x => x.id === f.id ? {...x, portions: x.portions + 1} : x))}>+</button>
+          </div>
+        </div>`)}</div>`}
+        <form className="card" style=${{display:"flex", gap:8, marginTop:8}} onSubmit=${e=>{ e.preventDefault(); const n = freezerDraft.name.trim(); if (n) { setFreezer([...freezer, { id: uid(), name: n, portions: Math.max(1, +freezerDraft.portions || 1), date: isoDate(new Date()) }]); setFreezerDraft({ name: "", portions: 2 }); } }}>
+          <input className="input" style=${{flex:1, minWidth:0}} list="meal-names" value=${freezerDraft.name} onChange=${e=>setFreezerDraft({...freezerDraft, name: e.target.value})} placeholder="Ret, fx dhal" aria-label="Ret i fryseren" />
+          <datalist id="meal-names">${allMeals.map(m => html`<option key=${m.name} value=${m.name} />`)}</datalist>
+          <input className="input" style=${{width:60}} type="number" min="1" inputMode="numeric" value=${freezerDraft.portions} onChange=${e=>setFreezerDraft({...freezerDraft, portions: e.target.value})} aria-label="Portioner" />
+          <button className="btn soft" type="submit" disabled=${!freezerDraft.name.trim()}>Læg i</button>
+        </form>
+        <label style=${{display:"flex", alignItems:"center", gap:10, marginTop:10}} className="small">
+          <input type="checkbox" style=${{width:20, height:20, accentColor:"var(--accent)"}} checked=${shop.useFreezer !== false} onChange=${e=>setShop(s => ({...s, useFreezer: e.target.checked}))} />
+          Brug portionerne i fryseren i madplanen
+        </label>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Har altid</h2><button className="link-btn small" onClick=${()=>setPantry([...now, ...BASICS.map(term => ({ term, always: true }))])}>Nulstil</button></div>
+        <div className="card stack">
+          <div className="small muted">Krydderier, olie og andet, du altid har. Det købes aldrig ind til madplanen.</div>
+          <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${always.map(pchip)}</div>
         </div>
       </div>
     </div>`;
@@ -2277,9 +2655,16 @@ function App() {
 
   const FoodPage = () => html`<div>
     ${FoodBudget()}
-    <div className="seg" role="tablist">${[["plan", "Madplan"], ["list", `Indkøbsliste${shop.items.filter(i => !i.done).length ? ` (${shop.items.filter(i => !i.done).length})` : ""}`], ["meals", `Retter${favMeals.length ? ` (${favMeals.length})` : ""}`]].map(([id, label]) =>
+    ${deals.length > 0 && html`<div className="tip" style=${{marginTop:0, marginBottom:12, alignItems:"flex-start"}}>
+      <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div>
+      <div className="stack" style=${{gap:6, flex:1}}>${deals.map(d => html`<div key=${d.term}>
+        <b>${d.term}</b> er på tilbud i ${d.store}: <b>${kr(d.price)}</b> (normalt ca. ${kr(d.normal)})${d.till ? ` til ${shortDate(isoDate(new Date(d.till)))}` : "."} Køb gerne til et par uger.
+        <button className="link-btn small" onClick=${()=>{ setShop(s => ({...s, items: [...s.items, { id: uid(), name: d.term, done: false, pick: d.id, qty: "", snap: { id: d.id, store: d.store, price: d.price, heading: d.heading, image: d.image, till: d.till } }]})); flash("shop", `${d.term} er lagt på indkøbslisten.`); }}>+ Indkøbsliste</button>
+      </div>`)}</div>
+    </div>`}
+    <div className="seg" role="tablist">${[["plan", "Madplan"], ["list", `Indkøb${shop.items.filter(i => !i.done).length ? ` (${shop.items.filter(i => !i.done).length})` : ""}`], ["meals", "Retter"], ["home", "Hjemme"]].map(([id, label]) =>
       html`<button key=${id} role="tab" aria-selected=${foodTab === id} className=${foodTab === id ? "on" : ""} onClick=${()=>setFoodTab(id)}>${label}</button>`)}</div>
-    ${foodTab === "plan" ? PlanTab() : foodTab === "list" ? ShopPage() : MealsTab()}
+    ${foodTab === "plan" ? PlanTab() : foodTab === "list" ? ShopPage() : foodTab === "home" ? HomeTab() : MealsTab()}
     <div className="small faint" style=${{marginTop:16}}>Tilbud fra Tjek (eTilbudsavis). Priser og gyldighed kan afvige i butikken.</div>
   </div>`;
 
@@ -2497,7 +2882,7 @@ function App() {
       <button onClick=${()=>{ toast.restore(); setToast(null); clearTimeout(toastTimer.current); }}>Fortryd</button>
     </div>`}
     <nav className="nav"><div className="nav-inner">
-      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); window.scrollTo(0,0); }}><${Icon} name=${p.icon} />${p.label}</button>`)}
+      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); window.scrollTo(0,0); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && newOffers ? html`<span className="nav-dot" aria-label="Nye tilbud"></span>` : null}</button>`)}
     </div></nav>
   </div>`;
 }

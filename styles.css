@@ -313,3 +313,5 @@ select.input { appearance: auto; }
 .seg { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface); margin-bottom: 12px; }
 .seg button { flex: 1; border: none; background: none; color: var(--text-2); font: inherit; font-size: 13px; font-weight: 500; padding: 8px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
 .seg button.on { background: var(--accent-bg); color: var(--accent); }
+.nav button { position: relative; }
+.nav-dot { position: absolute; top: 6px; left: calc(50% + 8px); width: 9px; height: 9px; border-radius: 50%; background: var(--neg); box-shadow: 0 0 0 2px var(--surface, var(--bg)); }
