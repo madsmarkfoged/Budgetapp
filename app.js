@@ -1492,7 +1492,7 @@ function App() {
       </div>
 
 
-      ${manual.length > 0 && html`<div className="section">
+      ${manual.length > 0 && apiKey && html`<div className="section">
         <button className="btn soft block" disabled=${priceLoading} onClick=${updatePricesAI}><${Icon} name="spark" /> ${priceLoading ? "Henter kurser…" : "Opdater manuelle kurser med AI"}</button>
         <${Msg} k="price" />
       </div>`}
@@ -1824,12 +1824,17 @@ function App() {
     const backupDays = lastBackup ? Math.floor((Date.now() - lastBackup) / 86400e3) : null;
     const backupText = backupDays == null ? "Ingen backup endnu" : backupDays === 0 ? "Sidste backup: i dag" : `Sidste backup: ${backupDays} dage siden`;
     const backupStale = transactions.length > 0 && (backupDays == null || backupDays > 30);
-    return html`<div className="list stagger">
-      ${MORE_PAGES.map((p, i) => html`<button key=${p.id} style=${stag(i)} className="row" onClick=${()=>{ setSub(p.id); window.scrollTo(0,0); }}>
+    // AI features cost money via the user's own Claude API key; without one they stay out of the menu.
+    const pages = MORE_PAGES.filter(p => apiKey || !["ai", "apikey"].includes(p.id));
+    return html`<div>
+      <div className="list stagger">
+      ${pages.map((p, i) => html`<button key=${p.id} style=${stag(i)} className="row" onClick=${()=>{ setSub(p.id); window.scrollTo(0,0); }}>
         <div className="sq" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name=${p.icon} /></div>
         <div className="main"><div className="title">${p.label}</div><div className=${"sub" + (p.id === "data" && backupStale ? " neg" : "")}>${p.id === "data" ? backupText : p.sub}</div></div>
         <span className="faint"><${Icon} name="chevron" /></span>
       </button>`)}
+      </div>
+      ${!apiKey && html`<button className="link-btn small" style=${{display:"block", margin:"14px auto 0", color:"var(--text-2)"}} onClick=${()=>{ setSub("apikey"); window.scrollTo(0,0); }}>Slå AI-funktioner til (kræver Claude API-nøgle)</button>`}
     </div>`;
   };
 
