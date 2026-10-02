@@ -674,18 +674,21 @@ function App() {
   const subscriptions = detectSubscriptions(transactions, subsHidden);
   const subsMonthly = subscriptions.reduce((s, x) => s + x.monthly, 0);
 
-  // Travel fund: the balance comes from the chosen manual account, or the number typed in.
-  const rejseAccount = rejse.accountId ? assets.find(a => a.id === rejse.accountId) : null;
-  const rejseSaved = rejseAccount ? (+rejseAccount.value || 0) : (+rejse.saved || 0);
+  // Travel fund: the user and the sister each earmark `rejse.goal` (the user's part sits in savings).
+  // A trip costs what both laid out; each pays half, so the one who paid more is owed the difference.
   const tripStats = (trip) => {
     const txs = transactions.filter(t => t.trip === trip.id).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-    const spent = txs.reduce((s, t) => s + (t.amount < 0 ? -t.amount : 0), 0);
+    const mine = txs.reduce((s, t) => s + (t.amount < 0 ? -t.amount : 0), 0);
+    const hers = +trip.sisterPaid || 0;
+    const total = mine + hers, half = Math.round(total / 2 * 100) / 100;
     // Money tagged to the trip coming in is the sister paying back; paidBack covers payments outside the bank.
     const repaid = txs.reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0) + (+trip.paidBack || 0);
-    const half = Math.round(spent / 2 * 100) / 100;
-    return { txs, spent, half, repaid, owed: Math.max(0, Math.round((half - repaid) * 100) / 100) };
+    const owed = Math.round((mine - half - repaid) * 100) / 100; // > 0: søs owes the user; < 0: the user owes søs
+    return { txs, mine, hers, total, half, repaid, owed };
   };
-  const tripsOwed = rejse.trips.reduce((s, tr) => s + tripStats(tr).owed, 0);
+  const tripsUsed = rejse.trips.reduce((s, tr) => s + tripStats(tr).half, 0);
+  const rejseLeft = (+rejse.goal || 0) - tripsUsed;
+  const tripsOwed = rejse.trips.reduce((s, tr) => s + Math.max(0, tripStats(tr).owed), 0);
 
   // Month-to-date spending per category vs. the same days last month (calendar months).
   const spendingInsight = () => {
@@ -1490,12 +1493,13 @@ function App() {
   const kv = (label, value, cls = "") => html`<div style=${{display:"flex",justifyContent:"space-between",gap:12}}><span className="muted">${label}</span><span className=${"num " + cls}>${value}</span></div>`;
 
   const TripsPage = () => {
-    const pct = rejse.goal > 0 ? Math.min(100, rejseSaved / rejse.goal * 100) : 0;
+    const goal = +rejse.goal || 0;
+    const pct = goal > 0 ? Math.max(0, Math.min(100, rejseLeft / goal * 100)) : 0;
     const setTrips = (trips) => setRejse({...rejse, trips});
     const setTrip = (id, patch) => setTrips(rejse.trips.map(tr => tr.id === id ? {...tr, ...patch} : tr));
     const addTrip = () => {
       const to = isoDate(new Date());
-      const tr = { id: uid(), name: "Ny rejse", from: addDays(to, -14), to, paidBack: 0 };
+      const tr = { id: uid(), name: "Ny rejse", from: addDays(to, -14), to, sisterPaid: 0, paidBack: 0 };
       setTrips([tr, ...rejse.trips]); setPickTrip(tr.id);
     };
     const removeTrip = (tr) => {
@@ -1506,9 +1510,10 @@ function App() {
     };
     const request = async (tr, s) => {
       // fmt() already ends in "kr.", which doubles as the full stop.
-      const text = `Hej søs! ${tr.name} kostede i alt ${fmt(s.spent)}, så din halvdel er ${fmt(s.half)}`
-        + (s.repaid > 0 ? ` Du har betalt ${fmt(s.repaid)}, så der mangler ${fmt(s.owed)}` : "")
-        + " Kan du MobilePay mig?";
+      const text = `Hej søs! ${tr.name} kostede i alt ${fmt(s.total)}`
+        + ` Jeg lagde ${fmt(s.mine)} ud${s.hers > 0 ? `, og du lagde ${fmt(s.hers)} ud` : ""}, så vi skal hver betale ${fmt(s.half)}`
+        + (s.repaid > 0 ? ` Du har allerede betalt ${fmt(s.repaid)}` : "")
+        + ` Så mangler du at betale mig ${fmt(s.owed)} Kan du MobilePay mig?`;
       try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e?.name === "AbortError") return; }
       navigator.clipboard?.writeText(text).then(() => flash("trip-" + tr.id, "Beskeden er kopieret. Sæt den ind i en besked til søs."), () => {});
     };
@@ -1516,24 +1521,18 @@ function App() {
       <div className="card stack">
         <div style=${{display:"flex",alignItems:"center",gap:12}}>
           <div className="sq" style=${{background:"#EF9F2733", color: tint("#EF9F27", 0.3)}}><${Icon} name="plane" /></div>
-          <div style=${{flex:1,minWidth:0}}><div>Din ferieopsparing</div><div className="small muted">${fmt(rejseSaved)} af ${fmt(rejse.goal)} · søs sparer det samme op</div></div>
+          <div style=${{flex:1,minWidth:0}}><div>Tilbage af rejsepengene</div><div className="small muted">${fmt(rejseLeft)} hver af ${fmt(goal)} · ${fmt(rejseLeft * 2)} i alt</div></div>
           <div className="num" style=${{fontWeight:600}}>${Math.round(pct)} %</div>
         </div>
         <div className="bar" style=${{height:10}}><div style=${{width:`${pct}%`, background:"#EF9F27"}}></div></div>
-        <div className="grid2">
-          <label className="field">Konto<select className="input" value=${rejse.accountId || ""} onChange=${e=>setRejse({...rejse, accountId: e.target.value || null})}>
-            <option value="">Indtast selv</option>
-            ${assets.filter(a => a.source !== "bank").map(a => html`<option key=${a.id} value=${a.id}>${a.name}</option>`)}
-          </select></label>
-          <label className="field">Mål pr. person (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.goal} onChange=${e=>setRejse({...rejse, goal:+e.target.value})} /></label>
-        </div>
-        ${!rejse.accountId && html`<label className="field">Sparet op (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.saved} onChange=${e=>setRejse({...rejse, saved:+e.target.value})} /></label>`}
-        ${tripsOwed > 0 && html`<div className="tip" style=${{marginTop:0}}><div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="coins" /></div><div>Søs mangler at betale <b>${fmt(tripsOwed)}</b> i alt.</div></div>`}
+        <div className="small muted">I har hver øremærket ${fmt(goal)} til rejser – dine står på opsparingen. Hver tur trækker jeres halvdel af prisen fra.${tripsUsed > 0 ? ` Brugt indtil nu: ${fmt(tripsUsed)} hver.` : ""}</div>
+        <label className="field">Øremærket pr. person (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.goal} onChange=${e=>setRejse({...rejse, goal:+e.target.value})} /></label>
+        ${tripsOwed > 0 && html`<div className="tip" style=${{marginTop:0}}><div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="coins" /></div><div>Søs mangler at betale dig <b>${fmt(tripsOwed)}</b> i alt.</div></div>`}
       </div>
 
       <div className="section">
         <div className="section-head"><h2>Rejser</h2><button className="link-btn" onClick=${addTrip}>+ Ny rejse</button></div>
-        ${rejse.trips.length === 0 && html`<div className="card empty">Ingen rejser endnu. Tryk <b>+ Ny rejse</b>, giv den et navn som "Italien", og vælg turens poster. De deles 50/50 med søs og tæller ikke i månedsbudgettet.</div>`}
+        ${rejse.trips.length === 0 && html`<div className="card empty">Ingen rejser endnu. Tryk <b>+ Ny rejse</b>, giv den et navn som "Italien", og vælg de poster, du har lagt ud. De tæller ikke i månedsbudgettet.</div>`}
         <div className="stack-gap">${rejse.trips.map(tr => {
           const s = tripStats(tr);
           const open = pickTrip === tr.id;
@@ -1550,20 +1549,24 @@ function App() {
               <label className="field">Fra<input className="input" type="date" value=${tr.from} onChange=${e=>setTrip(tr.id, {from: e.target.value})} /></label>
               <label className="field">Til<input className="input" type="date" value=${tr.to} onChange=${e=>setTrip(tr.id, {to: e.target.value})} /></label>
             </div>
+            <label className="field">Søs har selv lagt ud (kr.)<input className="input" type="number" inputMode="decimal" value=${tr.sisterPaid || 0} onChange=${e=>setTrip(tr.id, {sisterPaid: +e.target.value})} /></label>
             <div className="stack" style=${{gap:4}}>
-              ${kv(`Turen i alt (${s.txs.filter(t => t.amount < 0).length} poster)`, fmt(s.spent))}
-              ${kv("Din halvdel", fmt(s.half))}
-              ${kv("Søs' halvdel", fmt(s.half))}
-              ${kv("Betalt af søs", fmt(s.repaid), s.repaid > 0 ? "pos" : "")}
-              ${kv(s.owed > 0 ? "Søs mangler" : "Status", s.owed > 0 ? fmt(s.owed) : (s.spent > 0 ? "Gjort op ✓" : "–"), s.owed > 0 ? "neg" : "pos")}
+              ${kv(`Du har lagt ud (${s.txs.filter(t => t.amount < 0).length} poster)`, fmt(s.mine))}
+              ${kv("Søs har lagt ud", fmt(s.hers))}
+              ${kv("Turen i alt", fmt(s.total))}
+              ${kv("Hver jeres halvdel", fmt(s.half))}
+              ${s.repaid > 0 && kv("Søs har betalt tilbage", fmt(s.repaid), "pos")}
+              ${s.owed > 0.5 ? kv("Søs mangler at betale dig", fmt(s.owed), "neg")
+                : s.owed < -0.5 ? kv("Du mangler at betale søs", fmt(-s.owed), "neg")
+                : kv("Status", s.total > 0 ? "Gjort op ✓" : "–", "pos")}
             </div>
             <div className="btns">
-              <button className="btn primary" disabled=${!(s.owed > 0)} onClick=${()=>request(tr, s)}>Anmod søs${s.owed > 0 ? ` om ${fmt(s.owed)}` : ""}</button>
+              <button className="btn primary" disabled=${!(s.owed > 0.5)} onClick=${()=>request(tr, s)}>Anmod søs${s.owed > 0.5 ? ` om ${fmt(s.owed)}` : ""}</button>
               <button className="btn" onClick=${()=>setPickTrip(open ? null : tr.id)}>${open ? "Færdig" : "Vælg poster"}</button>
             </div>
             <${Msg} k=${"trip-" + tr.id} />
             ${open && html`<div className="stack">
-              <div className="small muted">Sæt flueben ved turens udgifter. Indbetalinger fra søs efter turen kan også vælges – så tæller de som hendes betaling.</div>
+              <div className="small muted">Sæt flueben ved det, du har lagt ud på turen. Indbetalinger fra søs efter turen kan også vælges – så tæller de som hendes betaling.</div>
               ${freeSpend.length > 0 && html`<button className="btn soft" onClick=${()=>setTransactions(transactions.map(t => freeSpend.some(f => f.id === t.id) ? {...t, trip: tr.id} : t))}>Vælg alle ${freeSpend.length} udgifter i perioden</button>`}
               ${cands.length === 0 ? html`<div className="small faint">Ingen poster i perioden. Tjek datoerne.</div>` : html`<div className="list">${cands.map(t => {
                 const other = t.trip && t.trip !== tr.id;
@@ -1573,9 +1576,9 @@ function App() {
                   <div className=${"end " + amountClass(t.amount)}>${fmt(t.amount)}</div>
                 </label>`;
               })}</div>`}
-              <label className="field">Betalt af søs udenom banken (kr.)<input className="input" type="number" inputMode="decimal" value=${tr.paidBack || 0} onChange=${e=>setTrip(tr.id, {paidBack: +e.target.value})} /></label>
+              <label className="field">Søs har betalt tilbage udenom banken (kr.)<input className="input" type="number" inputMode="decimal" value=${tr.paidBack || 0} onChange=${e=>setTrip(tr.id, {paidBack: +e.target.value})} /></label>
               <div className="btns">
-                ${s.owed > 0 && html`<button className="btn soft" onClick=${()=>setTrip(tr.id, {paidBack: (+tr.paidBack || 0) + s.owed})}>Markér resten som betalt</button>`}
+                ${s.owed > 0.5 && html`<button className="btn soft" onClick=${()=>setTrip(tr.id, {paidBack: (+tr.paidBack || 0) + s.owed})}>Markér resten som betalt</button>`}
                 <button className="btn danger" onClick=${()=>removeTrip(tr)}><${Icon} name="trash" /> Slet rejse</button>
               </div>
             </div>`}
