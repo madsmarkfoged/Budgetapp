@@ -281,7 +281,7 @@ const TJEK_SEARCH = "https://squid-api.tjek.com/v2/offers/search";
 const CHAINS = ["REMA 1000", "Netto", "Lidl", "Føtex", "Bilka", "Coop 365", "SuperBrugsen", "Kvickly", "Dagli'Brugsen", "Meny", "Spar", "Løvbjerg", "Min Købmand", "Lagkagehuset", "7-Eleven"];
 const AARHUS = { lat: 56.1572, lng: 10.2107, place: "Aarhus C" };
 const STAPLES = ["Mælk", "Æg", "Brød", "Kaffe", "Smør", "Ost", "Kylling", "Hakket oksekød", "Pasta", "Ris", "Bananer", "Yoghurt", "Toiletpapir"];
-const DEFAULT_SHOP = { items: [], stores: null, meals: [], days: 5, plan: null, ...AARHUS };
+const DEFAULT_SHOP = { items: [], stores: null, meals: [], staples: ["græsk yoghurt"], days: 6, cookDays: 3, plan: null, ...AARHUS };
 const kr = (n) => new Intl.NumberFormat("da-DK", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(n) + " kr.";
 const chainOf = (dealerName) => CHAINS.find(c => (dealerName || "").toLowerCase().startsWith(c.toLowerCase())) || dealerName;
 
@@ -325,7 +325,15 @@ const MEAL_TEMPLATES = [
   ["Burger", ["burgerboller", "hakket oksekød", "ost", "salat"]],
   ["Pizza", ["pizzadej", "skinke", "ost", "tomatsauce"]],
   ["Omelet med bacon", ["æg", "bacon", "ost"]],
+  // Protein-rich pasta dishes (roughly 40–50 g protein per portion).
+  ["Kyllingepasta med hytteostsauce", ["kylling", "pasta", "hytteost", "spinat", "hvidløg"]],
+  ["Bolognese med linser", ["hakket oksekød", "røde linser", "pasta", "hakkede tomater", "løg"]],
+  ["Tunpasta med cherrytomater", ["tun", "pasta", "cherrytomater", "rødløg", "skyr"]],
+  ["Kalkunpasta med pesto og spinat", ["kalkun", "pasta", "pesto", "spinat"]],
+  ["Kylling og broccoli i parmesanpasta", ["kylling", "pasta", "broccoli", "parmesan"]],
+  ["Laksepasta med citron og spinat", ["laks", "pasta", "spinat", "skyr", "citron"]],
 ];
+const PROTEIN_MEALS = new Set(["Kyllingepasta med hytteostsauce", "Bolognese med linser", "Tunpasta med cherrytomater", "Kalkunpasta med pesto og spinat", "Kylling og broccoli i parmesanpasta", "Laksepasta med citron og spinat"]);
 const WEEKDAYS = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
 
 // An offer fits an ingredient when every word of the ingredient starts a word in the offer heading
@@ -335,30 +343,58 @@ function offerFits(term, heading) {
   return term.toLowerCase().split(/\s+/).filter(Boolean).every(w => h.includes(" " + w));
 }
 
-// Week plan from favourite meals and this week's offers: pick the 1–2 of the user's stores where most
-// ingredients are on offer, then the meals with most ingredients on offer there.
-function planMeals(favorites, offersByTerm, stores, count) {
-  const terms = [...new Set(favorites.flatMap(m => m.ingredients))];
-  // First fitting offer per store per ingredient, in Tjek's relevance order.
-  const best = {};
+// Normal (non-offer) shelf prices per typical pack, in kr. Tjek only knows offers, so the plan uses these
+// rough estimates, and an offer's "før"-price only for ingredients not listed here (a "før"-price can
+// belong to a multipack or a pricier variant, e.g. ginger shots for "ingefær").
+const NORMAL_PRICES = {
+  "kylling": 50, "ris": 22, "kokosmælk": 15, "løg": 10, "hakket oksekød": 50, "spaghetti": 12, "pasta": 12,
+  "hakkede tomater": 8, "kidneybønner": 10, "tortilla": 22, "ost": 40, "salat": 15, "pesto": 25, "nudler": 15,
+  "wokgrøntsager": 25, "lasagneplader": 15, "laks": 65, "kartofler": 20, "broccoli": 15, "hakket svinekød": 38,
+  "æg": 32, "burgerboller": 22, "pizzadej": 20, "skinke": 25, "tomatsauce": 18, "bacon": 25, "røde linser": 22,
+  "ingefær": 8, "hvidløg": 8, "yoghurt": 22, "agurk": 9, "salsiccia": 55, "fløde": 16, "basilikum": 15,
+  "hytteost": 16, "spinat": 15, "tun": 14, "cherrytomater": 18, "rødløg": 10, "skyr": 20, "kalkun": 55,
+  "parmesan": 30, "citron": 6, "græsk yoghurt": 26,
+};
+const normalPrice = (term, offers) =>
+  NORMAL_PRICES[term.toLowerCase()] || (offers || []).find(o => o.before && offerFits(term, o.heading))?.before || 25;
+
+// What a set of meals costs, at the offer price where there is one, else normal price. Every meal is a
+// separate batch, so it buys its own packs (two chicken dishes = two packs of chicken); staples count once.
+const planCost = (meals, staples = []) => {
+  const v = [...staples, ...meals.flatMap(m => m.items)].map(i => ({ offer: i.offer?.price, normal: i.normal }));
+  return { total: v.reduce((s, x) => s + (x.offer ?? x.normal), 0), normal: v.reduce((s, x) => s + x.normal, 0) };
+};
+
+// Dinner plan built from this week's offers: for each store (and each pair of stores) pick the meals that
+// save the most there – favourites count as 20 kr. extra, so offers still decide – and price the whole shop,
+// normal-price items and the weekly staples included. The cheapest option wins; a second store must save at
+// least 25 kr. to be worth the trip.
+function planWeek(pool, offersByTerm, stores, count, staples = []) {
+  const terms = [...new Set([...staples, ...pool.flatMap(m => m.ingredients)])];
+  const best = {}, normal = {};
   for (const t of terms) {
     best[t] = {};
+    normal[t] = normalPrice(t, offersByTerm[t]);
     for (const o of offersByTerm[t] || []) if (stores.includes(o.store) && !best[t][o.store] && offerFits(t, o.heading)) best[t][o.store] = o;
   }
-  const pick = (t, set) => set.map(st => best[t][st]).filter(Boolean).sort((a, b) => a.price - b.price)[0] || null;
-  const score = (set) => terms.reduce((s, t) => { const o = pick(t, set); return s + (o ? 1 + Math.max(0, (o.before || 0) - o.price) / 50 : 0); }, 0);
-  const singles = stores.map(st => [st]);
-  const pairs = stores.flatMap((a, i) => stores.slice(i + 1).map(b => [a, b]));
-  const top = (list) => list.map(set => ({ set, sc: score(set) })).sort((a, b) => b.sc - a.sc)[0];
-  const one = top(singles), two = top(pairs);
-  // A second store is only worth the trip if it adds at least two ingredients on offer.
-  const chosen = two && one && two.sc >= one.sc + 2 ? two.set : one ? one.set : [];
-  const rated = favorites.map(m => {
-    const items = m.ingredients.map(t => ({ term: t, offer: pick(t, chosen) }));
-    const hits = items.filter(i => i.offer).length;
-    return { meal: m, items, rank: hits / Math.max(1, items.length) + hits * 0.01 };
-  }).sort((a, b) => b.rank - a.rank);
-  return { stores: chosen, meals: rated.slice(0, count) };
+  const offerIn = (t, set) => set.map(st => best[t][st]).filter(Boolean).sort((x, y) => x.price - y.price)[0] || null;
+  const evaluate = (set) => {
+    const rated = pool.map(m => {
+      const items = m.ingredients.map(t => ({ term: t, offer: offerIn(t, set), normal: normal[t] }));
+      const saving = items.reduce((s, i) => s + (i.offer ? Math.max(0, i.normal - i.offer.price) : 0), 0);
+      return { mealId: m.id, name: m.name, url: m.url || null, fav: !!m.fav, items, value: saving + (m.fav ? 20 : 0) };
+    }).sort((x, y) => y.value - x.value);
+    // Variety: no two meals built on the same main ingredient (the first one listed, e.g. "laks").
+    const meals = [], used = new Set();
+    for (const r of rated) if (meals.length < count && !used.has(r.items[0]?.term)) { meals.push(r); used.add(r.items[0]?.term); }
+    for (const r of rated) if (meals.length < count && !meals.includes(r)) meals.push(r);
+    const fixed = staples.map(t => ({ term: t, offer: offerIn(t, set), normal: normal[t] }));
+    return { stores: set, meals, staples: fixed, alts: rated.filter(r => !meals.includes(r)), ...planCost(meals, fixed) };
+  };
+  const pairs = stores.flatMap((x, i) => stores.slice(i + 1).map(y => [x, y]));
+  const options = [...stores.map(x => [x]), ...pairs].map(evaluate)
+    .sort((x, y) => (x.total + (x.stores.length > 1 ? 25 : 0)) - (y.total + (y.stores.length > 1 ? 25 : 0)));
+  return { ...options[0], compare: options.slice(0, 4).map(o => ({ stores: o.stores, total: o.total })) };
 }
 
 // Holding type for the allocation bar: Saxo tells us; for manual holdings guess from the name.
@@ -652,6 +688,7 @@ function App() {
   const [foodTab, setFoodTab] = useState("plan");
   const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "", url: "" });
   const [planBusy, setPlanBusy] = useState(false);
+  const [stapleDraft, setStapleDraft] = useState("");
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saveError, setSaveError] = useState(false);
 
@@ -1850,36 +1887,55 @@ function App() {
     </div>`;
   };
 
-  const favMeals = (shop.meals || []).filter(m => m.fav);
+  // All dinners the planner may use: the starter meals (with the user's edits) plus their own, minus any skipped.
+  const allMeals = [
+    ...MEAL_TEMPLATES.map(([name, ingredients]) => (shop.meals || []).find(m => m.name === name) || { id: "tpl:" + name, name, ingredients, template: true }),
+    ...(shop.meals || []).filter(m => !MEAL_TEMPLATES.some(([n]) => n === m.name)),
+  ];
+  const mealPool = allMeals.filter(m => !m.skip && m.ingredients?.length);
+  const favMeals = mealPool.filter(m => m.fav);
+  const nights = Math.max(1, +shop.days || 6), cookDays = Math.max(1, +shop.cookDays || 3);
+  const staples = shop.staples ?? ["græsk yoghurt"];
 
   const makePlan = async () => {
-    if (!favMeals.length) { setFoodTab("meals"); return; }
     setPlanBusy(true);
     try {
-      const terms = [...new Set(favMeals.flatMap(m => m.ingredients))];
+      const terms = [...new Set([...staples, ...mealPool.flatMap(m => m.ingredients)])];
       const lists = {};
       for (let i = 0; i < terms.length; i += 6) {
         const chunk = terms.slice(i, i + 6);
         (await Promise.all(chunk.map(offersFor))).forEach((l, k) => { lists[chunk[k]] = l; });
       }
-      const r = planMeals(favMeals, lists, shopStores, Math.max(1, +shop.days || 5));
-      const start = new Date();
-      setShop({...shop, plan: {
-        created: isoDate(start), stores: r.stores,
-        days: r.meals.map((x, i) => ({ day: WEEKDAYS[(start.getDay() + i) % 7], mealId: x.meal.id, name: x.meal.name, url: x.meal.url || null, items: x.items })),
-      }});
+      const r = planWeek(mealPool, lists, shopStores, Math.ceil(nights / cookDays), staples);
+      setShop({...shop, plan: { created: isoDate(new Date()), nights, cookDays, ...r }});
     } finally { setPlanBusy(false); }
+  };
+
+  // Swap one meal for the best one not in the plan; the swapped-out meal goes to the back of the queue.
+  const swapMeal = (i) => {
+    const plan = shop.plan;
+    if (!plan?.alts?.length) return;
+    const meals = plan.meals.slice(), [next, ...rest] = plan.alts;
+    const old = meals[i]; meals[i] = next;
+    // The store comparison was for the original meals, so it no longer applies after a swap.
+    setShop({...shop, plan: {...plan, meals, alts: [...rest, old], swapped: true, ...planCost(meals, plan.staples || [])}});
   };
 
   const PlanTab = () => {
     const plan = shop.plan;
+    const span = (i) => {
+      if (!plan) return "";
+      const start = new Date(plan.created + "T12:00:00");
+      const from = i * plan.cookDays, to = Math.min(from + plan.cookDays, plan.nights) - 1;
+      const day = (n) => WEEKDAYS[(start.getDay() + n) % 7].slice(0, 3);
+      return from === to ? day(from) : `${day(from)}–${day(to)}`;
+    };
+    const old = plan && !plan.compare; // a plan made before prices were compared
     const shopping = {};
-    if (plan) for (const d of plan.days) for (const it of d.items) {
+    if (plan && !old) for (const it of [...(plan.staples || []), ...plan.meals.flatMap(m => m.items)]) {
       const key = it.offer ? it.offer.store : "Normalpris";
-      (shopping[key] ||= {});
-      shopping[key][it.term] ||= it;
+      (shopping[key] ||= {})[it.term] ||= it;
     }
-    const total = plan ? Object.values(shopping).flatMap(g => Object.values(g)).reduce((s, it) => s + (it.offer?.price || 0), 0) : 0;
     const addToList = () => {
       const have = new Set(shop.items.map(i => i.name.toLowerCase()));
       const add = Object.values(shopping).flatMap(g => Object.values(g)).filter(it => !have.has(it.term.toLowerCase()))
@@ -1889,79 +1945,106 @@ function App() {
       setOffers(m => ({...m, ...Object.fromEntries(add.filter(a => termOffers[a.name]).map(a => [a.id, { list: termOffers[a.name] }]))}));
       flash("plan", add.length ? `${add.length} varer lagt på indkøbslisten.` : "Alle varerne står allerede på listen.");
     };
+    const stepper = (label, value, min, max, key) => html`<div style=${{display:"flex", alignItems:"center", gap:10}}>
+      <span className="small" style=${{flex:1}}>${label}</span>
+      <button className="icon-btn" aria-label=${`${label}: færre`} disabled=${value <= min} onClick=${()=>setShop({...shop, [key]: value - 1})}>−</button>
+      <span className="num" style=${{minWidth:22, textAlign:"center", fontWeight:600}}>${value}</span>
+      <button className="icon-btn" aria-label=${`${label}: flere`} disabled=${value >= max} onClick=${()=>setShop({...shop, [key]: value + 1})}>+</button>
+    </div>`;
     return html`<div>
       <div className="card stack">
-        <div className="small muted">Madplanen vælger blandt dine ${favMeals.length} yndlingsretter dem, hvor flest ingredienser er på tilbud, og finder de 1–2 butikker, det kan betale sig at gå i.</div>
-        <div style=${{display:"flex", alignItems:"center", gap:10}}>
-          <span className="small" style=${{flex:1}}>Antal aftener</span>
-          <button className="icon-btn" aria-label="Færre aftener" onClick=${()=>setShop({...shop, days: Math.max(1, (+shop.days || 5) - 1)})}>−</button>
-          <span className="num" style=${{minWidth:20, textAlign:"center", fontWeight:600}}>${shop.days || 5}</span>
-          <button className="icon-btn" aria-label="Flere aftener" onClick=${()=>setShop({...shop, days: Math.min(7, (+shop.days || 5) + 1)})}>+</button>
+        <div className="small muted">Aftensmad ud fra ugens tilbud. Dine ♥-retter vælges oftere, og retter du har slået fra under Retter, kommer ikke med.</div>
+        ${stepper("Aftener", nights, 1, 14, "days")}
+        ${stepper("Dage pr. ret", cookDays, 1, 5, "cookDays")}
+        <div className="small faint">${Math.ceil(nights / cookDays)} retter, der hver rækker til ${cookDays} ${cookDays === 1 ? "aften" : "aftener"}.</div>
+        <div>
+          <div className="small" style=${{marginBottom:6}}>Faste varer hver uge</div>
+          <div style=${{display:"flex", flexWrap:"wrap", gap:6, alignItems:"center"}}>
+            ${staples.map(t => html`<button key=${t} className="chip info" aria-label=${`Fjern ${t} fra faste varer`} onClick=${()=>setShop({...shop, staples: staples.filter(x => x !== t)})}>${t} ✕</button>`)}
+            <form style=${{display:"flex", gap:6}} onSubmit=${e=>{ e.preventDefault(); const t = stapleDraft.trim().toLowerCase(); if (t && !staples.includes(t)) setShop({...shop, staples: [...staples, t]}); setStapleDraft(""); }}>
+              <input className="input sm" style=${{width:130}} value=${stapleDraft} onChange=${e=>setStapleDraft(e.target.value)} placeholder="+ fx skyr" aria-label="Tilføj fast vare" />
+            </form>
+          </div>
         </div>
-        <button className="btn primary block" disabled=${planBusy} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : favMeals.length ? (plan ? "Lav ny madplan" : "Lav madplan") : "Vælg dine yndlingsretter først"}</button>
+        <button className="btn primary block" disabled=${planBusy || !mealPool.length} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : plan ? "Lav ny madplan" : "Lav madplan"}</button>
       </div>
 
-      ${plan && html`<div>
+      ${plan && !old && html`<div>
         <div className="tip" style=${{marginTop:12}}>
-          <div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="cart" /></div>
-          <div>${plan.stores.length ? html`Gå i <b>${plan.stores.join(" og ")}</b>. Tilbudsvarerne koster ca. <b>${kr(Math.round(total))}</b>` : "Ingen af dine butikker har tilbud på ingredienserne lige nu."}</div>
+          <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div>
+          <div>Gå i <b>${plan.stores.join(" og ")}</b>. Indkøbet koster ca. <b>${kr(Math.round(plan.total))}</b>${plan.normal > plan.total ? html` – du sparer ca. <b className="pos">${kr(Math.round(plan.normal - plan.total))}</b> mod normalpris` : ""}</div>
         </div>
+        ${plan.swapped && html`<div className="small faint" style=${{margin:"8px 2px 0"}}>Du har byttet retter. Tryk <b>Lav ny madplan</b> for at sammenligne butikkerne igen.</div>`}
+        ${plan.compare?.length > 1 && !plan.swapped && html`<div className="card" style=${{marginTop:8}}>
+          <div className="small muted" style=${{marginBottom:6}}>Hele indkøbet inkl. varer til normalpris</div>
+          <div className="stack" style=${{gap:4}}>${plan.compare.map((c, i) => html`<div key=${i} style=${{display:"flex", justifyContent:"space-between", gap:12, fontWeight: i === 0 ? 600 : 400}}>
+            <span>${i === 0 ? "✓ " : ""}${c.stores.join(" + ")}</span><span className="num">ca. ${kr(Math.round(c.total))}</span></div>`)}</div>
+        </div>`}
+
         <div className="section">
-          <div className="section-head"><h2>Ugens madplan</h2><span className="small faint">lavet ${shortDate(plan.created)}</span></div>
-          <div className="list">${plan.days.map((d, i) => html`<div key=${i} className="row" style=${{alignItems:"flex-start"}}>
-            <div style=${{width:64, flexShrink:0, fontWeight:600, paddingTop:2}}>${d.day}</div>
+          <div className="section-head"><h2>Madplan</h2><span className="small faint">lavet ${shortDate(plan.created)}</span></div>
+          <div className="list">${plan.staples?.length > 0 && html`<div className="row" style=${{alignItems:"flex-start"}}>
+            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>Fast</div>
+            <div className="main"><div style=${{display:"flex", flexWrap:"wrap", gap:4}}>${plan.staples.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div></div>
+          </div>`}${plan.meals.map((m, i) => html`<div key=${i} className="row" style=${{alignItems:"flex-start"}}>
+            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}</div>
             <div className="main">
-              <div className="title" style=${{whiteSpace:"normal"}}>${d.name}${d.url && html` <a href=${d.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
-              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${d.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term}${it.offer ? ` · ${kr(it.offer.price)}` : ""}</span>`)}</div>
+              <div className="title" style=${{whiteSpace:"normal"}}>${m.fav ? "♥ " : ""}${m.name}${PROTEIN_MEALS.has(m.name) && html` <span className="chip info" style=${{fontSize:11, padding:"1px 7px"}}>Proteinrig</span>`}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
+              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div>
+              ${plan.alts?.length > 0 && html`<button className="link-btn small" style=${{marginTop:6}} onClick=${()=>swapMeal(i)}>Byt ret</button>`}
             </div>
           </div>`)}</div>
         </div>
+
         <div className="section">
           <div className="section-head"><h2>Det skal du købe</h2></div>
-          <div className="stack-gap">${Object.entries(shopping).sort(([a], [b]) => (a === "Normalpris") - (b === "Normalpris")).map(([store, items]) => html`<div key=${store}>
-            <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store === "Normalpris" ? `Normalpris – køb i ${plan.stores[0] || "din butik"}` : store}</div>
+          <div className="stack-gap">${Object.entries(shopping).sort(([x], [y]) => (x === "Normalpris") - (y === "Normalpris")).map(([store, items]) => html`<div key=${store}>
+            <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store === "Normalpris" ? `Normalpris – køb i ${plan.stores[0]}` : `${store} – tilbud`}</div>
             <div className="list">${Object.values(items).map(it => html`<div key=${it.term} className="row" style=${{minHeight:48}}>
               ${it.offer?.image ? html`<img src=${it.offer.image} alt="" loading="lazy" style=${{width:36, height:36, objectFit:"contain", borderRadius:6, background:"#fff"}} />` : null}
               <div className="main"><div className="title">${it.term}</div>${it.offer && html`<div className="sub">${it.offer.heading}</div>`}</div>
-              <div className="end num">${it.offer ? kr(it.offer.price) : ""}</div>
+              <div className="end num">${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</div>
             </div>`)}</div>
           </div>`)}</div>
+          <div className="small faint" style=${{marginTop:8}}>Normalpriser er skøn eller tilbudsavisens førpris. Hver ret regnes med sine egne pakker; listen viser hver vare én gang.</div>
           <button className="btn soft block" style=${{marginTop:12}} onClick=${addToList}><${Icon} name="plus" /> Læg det hele på indkøbslisten</button>
           <${Msg} k="plan" />
         </div>
       </div>`}
+      ${old && html`<div className="card empty" style=${{marginTop:12}}>Madplanen er lavet om. Tryk <b>Lav ny madplan</b>.</div>`}
       ${StoresBlock()}
     </div>`;
   };
 
   const MealsTab = () => {
     const meals = shop.meals || [];
-    const setMeals = (m) => setShop({...shop, meals: m});
-    const fromTemplate = (name, ingredients) => {
-      const ex = meals.find(m => m.name === name);
-      setMeals(ex ? meals.map(m => m.id === ex.id ? {...m, fav: !m.fav} : m) : [...meals, { id: uid(), name, ingredients, fav: true }]);
-    };
     const parse = (txt) => txt.split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
+    // Templates only get a stored entry once the user changes something about them.
+    const update = (m, patch) => {
+      const stored = meals.find(x => x.id === m.id || x.name === m.name);
+      setShop({...shop, meals: stored ? meals.map(x => x === stored ? {...x, ...patch} : x) : [...meals, { id: uid(), name: m.name, ingredients: m.ingredients, url: m.url || null, ...patch }]});
+    };
     const addOwn = () => {
       const name = mealDraft.name.trim(), ingredients = parse(mealDraft.ingredients);
       if (!name || !ingredients.length) return;
       const url = /^https?:\/\//.test(mealDraft.url.trim()) ? mealDraft.url.trim() : null;
-      setMeals([...meals, { id: uid(), name, ingredients, fav: true, url }]); setMealDraft({ name: "", ingredients: "", url: "" });
+      setShop({...shop, meals: [...meals, { id: uid(), name, ingredients, fav: true, url }]}); setMealDraft({ name: "", ingredients: "", url: "" });
     };
-    const isFav = (name) => meals.some(m => m.name === name && m.fav);
-    const own = meals.filter(m => !MEAL_TEMPLATES.some(([n]) => n === m.name));
     return html`<div>
-      <div className="small muted" style=${{margin:"0 2px 10px"}}>Tryk på de retter, du kan lide. Du kan rette ingredienserne – de bruges til at finde tilbud.</div>
-      <div className="list">${[...MEAL_TEMPLATES.map(([name, ing]) => meals.find(m => m.name === name) || { id: name, name, ingredients: ing, fav: false, template: true }), ...own].map(m => html`<div key=${m.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap"}}>
-        <button className=${"icon-btn" + (m.fav ? " on" : "")} style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name} er ${m.fav ? "" : "ikke "}en yndlingsret`}
-          onClick=${()=> m.template || MEAL_TEMPLATES.some(([n]) => n === m.name) ? fromTemplate(m.name, m.ingredients) : setMeals(meals.map(x => x.id === m.id ? {...x, fav: !x.fav} : x))}>${m.fav ? "♥" : "♡"}</button>
+      <div className="small muted" style=${{margin:"0 2px 10px"}}>♥ = vælges oftere. <b>Gider ikke</b> = kommer aldrig med i madplanen. Du kan rette ingredienserne – de bruges til at finde tilbud.</div>
+      <div className="list">${allMeals.map(m => html`<div key=${m.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: m.skip ? .45 : 1}}>
+        <button className="icon-btn" style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name}: yndlingsret`} disabled=${m.skip}
+          onClick=${()=>update(m, { fav: !m.fav })}>${m.fav ? "♥" : "♡"}</button>
         <div className="main">
-          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
-          ${m.fav && !m.template
-            ? html`<input className="input sm" style=${{marginTop:6}} value=${m.ingredients.join(", ")} aria-label=${`Ingredienser i ${m.name}`} onChange=${e=>setMeals(meals.map(x => x.id === m.id ? {...x, ingredients: parse(e.target.value)} : x))} />`
-            : html`<div className="sub" style=${{whiteSpace:"normal"}}>${m.ingredients.join(", ")}</div>`}
+          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${PROTEIN_MEALS.has(m.name) && html` <span className="chip info" style=${{fontSize:11, padding:"1px 7px"}}>Proteinrig</span>`}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
+          ${m.skip
+            ? html`<div className="sub">Kommer ikke med i madplanen</div>`
+            : html`<input className="input sm" style=${{marginTop:6}} defaultValue=${m.ingredients.join(", ")} aria-label=${`Ingredienser i ${m.name}`} onBlur=${e=>{ const ing = parse(e.target.value); if (ing.length && ing.join(",") !== m.ingredients.join(",")) update(m, { ingredients: ing }); }} />`}
         </div>
-        ${!MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setMeals(meals.filter(x => x.id !== m.id)); showUndo(`${m.name} er slettet`, () => setMeals(prev)); }}>Slet</button>`}
+        <div className="end" style=${{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
+          <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
+          ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop({...shop, meals: meals.filter(x => x.id !== m.id)}); showUndo(`${m.name} er slettet`, () => setShop({...shop, meals: prev})); }}>Slet</button>`}
+        </div>
       </div>`)}</div>
       <div className="section">
         <div className="section-head"><h2>Tilføj din egen ret</h2></div>
