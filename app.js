@@ -62,6 +62,8 @@ const addMonths = (ym, n) => { const [y,m] = ym.split("-").map(Number); return i
 const lastRentMonth = () => { const t = isoDate(new Date()); const ym = t.slice(0,7); return monthEnd(ym) <= t ? ym : addMonths(ym, -1); };
 const RENT_TEXT = "Husleje (fast)";
 const DEFAULT_RENT = { amount: 4982, assetId: null, auto: true, paidThrough: null };
+// Travel fund shared with the user's sister: each saves `goal`; trip costs are split 50/50.
+const DEFAULT_REJSE = { saved: 0, goal: 100000, accountId: null, trips: [] };
 const monthLabel = (ym) => { const [y,m] = ym.split("-"); return `${MONTHS_DA[+m-1]} ${y}`; };
 const monthName = (ym) => { const m = MONTHS_DA[+ym.split("-")[1]-1]; return m[0].toUpperCase() + m.slice(1); };
 // The running budget month flips to next month on payday itself.
@@ -220,6 +222,41 @@ function monthIncomeExpense(mtx) {
   return { inc, exp, sur, cn };
 }
 
+// Merchant key for grouping card/PBS charges: drops card words, numbers and references.
+const subKey = (d) => (d || "").toLowerCase()
+  .replace(/[^a-zæøå ]+/g, " ")
+  .replace(/\b(dankort|visa|mastercard|mc|nota|kortkøb|købt|betalingsservice|pbs|overførsel|dk|www|com|aps|as)\b/g, " ")
+  .replace(/\s+/g, " ").trim().split(" ").slice(0, 3).join(" ");
+
+// Recurring charges in the last six months: about one charge a month at a stable amount, still active.
+function detectSubscriptions(transactions, hidden = []) {
+  const today = isoDate(new Date());
+  const since = addDays(today, -190), stale = addDays(today, -45);
+  const groups = {};
+  for (const t of transactions) {
+    if (!t.date || t.date < since || !(t.amount < 0) || t.trip || t.description === RENT_TEXT) continue;
+    if (INCOME_CATS.includes(t.category) || EXCLUDED.includes(t.category) || ["Husleje", "Opsparing", "Investering"].includes(t.category)) continue;
+    const k = subKey(t.description);
+    if (k.length < 3) continue;
+    (groups[k] ||= []).push(t);
+  }
+  const out = [];
+  for (const [key, txs] of Object.entries(groups)) {
+    if (hidden.includes(key)) continue;
+    txs.sort((a, b) => a.date.localeCompare(b.date));
+    const months = new Set(txs.map(t => t.date.slice(0, 7)));
+    const known = txs.some(t => t.category === "Abonnementer");
+    if (months.size < (known ? 2 : 3) || txs.length > months.size * 1.5) continue;
+    const amounts = txs.map(t => -t.amount).sort((a, b) => a - b);
+    const median = amounts[Math.floor(amounts.length / 2)];
+    if (median < 10 || (amounts[amounts.length - 1] - amounts[0]) / median > 0.35) continue;
+    const last = txs[txs.length - 1];
+    if (last.date < stale) continue;
+    out.push({ key, name: last.description, category: last.category, monthly: -last.amount, last: last.date, months: months.size });
+  }
+  return out.sort((a, b) => b.monthly - a.monthly);
+}
+
 // Holding type for the allocation bar: Saxo tells us; for manual holdings guess from the name.
 const TYPE_LABEL = { Etf: "ETF", Stock: "Aktier", MutualFund: "Fonde", Bond: "Obligationer" };
 const TYPE_COLOR = { ETF: "#8B7BFF", Aktier: "#4FC3F7", Fonde: "#F2B35B", Obligationer: "#F48FB1", Andet: "#90A4AE", Kontant: "#9CF0C8" };
@@ -241,7 +278,9 @@ function normalizeData(d) {
   if (Array.isArray(d.holdings)) out.holdings = d.holdings.map(h=>({currency:"DKK",...h}));
   if (d.fxRates) out.fxRates = {...DEFAULT_FX, ...d.fxRates};
   if (typeof d.cash === "number") out.cash = d.cash;
-  if (d.rejse) out.rejse = d.rejse;
+  if (d.rejse) out.rejse = {...DEFAULT_REJSE, ...d.rejse};
+  if (Array.isArray(d.subsHidden)) out.subsHidden = d.subsHidden;
+  if (Array.isArray(d.invHistory)) out.invHistory = d.invHistory;
   if (d.sync) out.sync = d.sync;
   if (Array.isArray(d.history)) out.history = d.history;
   if (d.rent) out.rent = {...DEFAULT_RENT, ...d.rent};
@@ -342,6 +381,20 @@ function Sparkline({ points }) {
     <path className="area" d=${`${line} L300 64 L0 64 Z`} />
     <path className="line" d=${line} />
     <circle cx=${lx} cy=${ly} r="3.5" fill="#B8F7D8" />
+  </svg>`;
+}
+
+// Depot value (solid) against what has been put in (dashed); both lines share one scale.
+function InvestChart({ points }) {
+  if (points.length < 2) return html`<div className="small muted" style=${{padding:"18px 0", textAlign:"center"}}>Grafen fyldes ud fra i dag. Appen gemmer depotets værdi hver dag, du åbner den.</div>`;
+  const W = 300, H = 120;
+  const all = points.flatMap(p => [p.v, p.c]);
+  const min = Math.min(...all), max = Math.max(...all), span = max - min || 1;
+  const x = (i) => (i / (points.length - 1)) * W, y = (v) => H - 6 - ((v - min) / span) * (H - 12);
+  const path = (k) => points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(p[k]).toFixed(1)}`).join(" ");
+  return html`<svg viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none" style=${{width:"100%", height:140, display:"block", overflow:"visible"}} role="img" aria-label="Depotets værdi og indskudt beløb over tid">
+    <path d=${path("c")} fill="none" stroke="var(--text-2)" strokeWidth="1.5" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
+    <path d=${path("v")} fill="none" stroke="var(--accent)" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
   </svg>`;
 }
 
@@ -452,7 +505,9 @@ const PAGES = [
 ];
 
 const MORE_PAGES = [
-  { id: "wealth", label: "Formue og gæld", icon: "wallet", sub: "Konti, gæld og rejsepulje" },
+  { id: "wealth", label: "Formue og gæld", icon: "wallet", sub: "Konti og gæld" },
+  { id: "trips", label: "Rejsepulje", icon: "plane", sub: "Ferieopsparing og rejser med søs" },
+  { id: "subs", label: "Abonnementer", icon: "repeat", sub: "Faste træk hver måned" },
   { id: "connections", label: "Bankforbindelser", icon: "bank", sub: "Sparekassen Kronjylland og Saxo" },
   { id: "ai", label: "AI-analyse", icon: "spark", sub: "Råd baseret på dine tal" },
   { id: "import", label: "Import og værktøjer", icon: "upload", sub: "CSV, fast husleje, kategorier" },
@@ -477,10 +532,12 @@ function App() {
   const [holdings, setHoldings] = useState(init.holdings || []);
   const [fxRates, setFxRates] = useState(init.fxRates || DEFAULT_FX);
   const [cash, setCash] = useState(init.cash ?? 0);
-  const [rejse, setRejse] = useState(init.rejse || {saved:0, goal:100000});
+  const [rejse, setRejse] = useState(init.rejse || DEFAULT_REJSE);
   const [sync, setSync] = useState(init.sync || {bank:null, saxo:null});
   const [history, setHistory] = useState(init.history || []);
   const [rent, setRent] = useState(init.rent || DEFAULT_RENT);
+  const [subsHidden, setSubsHidden] = useState(init.subsHidden || []);
+  const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saveError, setSaveError] = useState(false);
 
   // ui state
@@ -492,6 +549,8 @@ function App() {
   const [budgetMonthSel, setBudgetMonthSel] = useState(currentBudgetMonth());
   const [editBudget, setEditBudget] = useState(false);
   const [nwRange, setNwRange] = useState("1M");
+  const [invRange, setInvRange] = useState("3M");
+  const [pickTrip, setPickTrip] = useState(null);
   const [csvPaste, setCsvPaste] = useState("");
   const [msgs, setMsgs] = useState({});
   const [aiMsg, setAiMsg] = useState(""); const [aiLoading, setAiLoading] = useState(false);
@@ -546,13 +605,15 @@ function App() {
     if (d.sync) setSync(d.sync);
     if (d.history) setHistory(d.history);
     if (d.rent) setRent(d.rent);
+    if (d.subsHidden) setSubsHidden(d.subsHidden);
+    if (d.invHistory) setInvHistory(d.invHistory);
   };
   const loadData = () => applyData(readStored());
 
   useEffect(() => {
-    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent}));
+    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,invHistory}));
     setSaveError(!ok);
-  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent]);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, invHistory]);
 
   useEffect(() => { navigator.storage?.persist?.().catch(()=>{}); }, []);
   useEffect(() => {
@@ -566,7 +627,7 @@ function App() {
   const months = [...new Set(transactions.map(t => budgetMonth(t.date,t.amount,t.category)))].filter(Boolean).sort().reverse();
 
   const monthStats = (ym) => {
-    const mtx = transactions.filter(t => !EXCLUDED.includes(t.category) && budgetMonth(t.date,t.amount,t.category) === ym);
+    const mtx = transactions.filter(t => !EXCLUDED.includes(t.category) && !t.trip && budgetMonth(t.date,t.amount,t.category) === ym);
     const { inc, exp, cn } = monthIncomeExpense(mtx);
     const byCat = {};
     for (const c of CATEGORIES) byCat[c] = INCOME_CATS.includes(c) ? 0 : Math.max(0, -cn[c]);
@@ -598,6 +659,34 @@ function App() {
     });
   }, [netWorth]);
 
+  // One depot snapshot per day (value incl. cash, and cost basis) for the investment graph.
+  useEffect(() => {
+    if (!holdings.length || !(invValue > 0)) return;
+    const today = isoDate(new Date());
+    const p = { d: today, v: Math.round(invValue), c: Math.round(invCost + (+cash || 0)) };
+    setInvHistory(h => {
+      const last = h[h.length-1];
+      if (last && last.d === today) return last.v === p.v && last.c === p.c ? h : [...h.slice(0,-1), p];
+      return [...h, p].slice(-1500);
+    });
+  }, [invValue, invCost]);
+
+  const subscriptions = detectSubscriptions(transactions, subsHidden);
+  const subsMonthly = subscriptions.reduce((s, x) => s + x.monthly, 0);
+
+  // Travel fund: the balance comes from the chosen manual account, or the number typed in.
+  const rejseAccount = rejse.accountId ? assets.find(a => a.id === rejse.accountId) : null;
+  const rejseSaved = rejseAccount ? (+rejseAccount.value || 0) : (+rejse.saved || 0);
+  const tripStats = (trip) => {
+    const txs = transactions.filter(t => t.trip === trip.id).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    const spent = txs.reduce((s, t) => s + (t.amount < 0 ? -t.amount : 0), 0);
+    // Money tagged to the trip coming in is the sister paying back; paidBack covers payments outside the bank.
+    const repaid = txs.reduce((s, t) => s + (t.amount > 0 ? t.amount : 0), 0) + (+trip.paidBack || 0);
+    const half = Math.round(spent / 2 * 100) / 100;
+    return { txs, spent, half, repaid, owed: Math.max(0, Math.round((half - repaid) * 100) / 100) };
+  };
+  const tripsOwed = rejse.trips.reduce((s, tr) => s + tripStats(tr).owed, 0);
+
   // Month-to-date spending per category vs. the same days last month (calendar months).
   const spendingInsight = () => {
     const now = new Date();
@@ -607,7 +696,7 @@ function App() {
       const out = {};
       for (const t of transactions) {
         if (!t.date || t.date.slice(0,7) !== ym || +t.date.slice(8,10) > dom) continue;
-        if (INCOME_CATS.includes(t.category) || EXCLUDED.includes(t.category) || t.category === "Husleje") continue;
+        if (INCOME_CATS.includes(t.category) || EXCLUDED.includes(t.category) || t.category === "Husleje" || t.trip) continue;
         if (eff(t) < 0) out[t.category] = (out[t.category] || 0) - eff(t);
       }
       return out;
@@ -1003,7 +1092,7 @@ function App() {
   // ---------- backup ----------
 
   const exportData = () => {
-    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,exported:new Date().toISOString()};
+    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,invHistory,exported:new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1035,7 +1124,7 @@ function App() {
     return html`<div key=${t.id} style=${stag(i)}>
       <button className="row" onClick=${() => setOpenTx(open ? null : t.id)}>
         <${CatIcon} cat=${t.category} />
-        <div className="main"><div className="title">${t.description}</div><div className="sub">${t.category}${t.source === "bank" ? " · bank" : ""}</div></div>
+        <div className="main"><div className="title">${t.description}</div><div className="sub">${t.category}${t.trip ? ` · ${rejse.trips.find(tr => tr.id === t.trip)?.name || "rejse"}` : ""}${t.source === "bank" ? " · bank" : ""}</div></div>
         <div className=${"end " + amountClass(t.amount)}>${fmt(t.amount)}</div>
       </button>
       ${open && html`<div className="expand stack">
@@ -1048,6 +1137,10 @@ function App() {
           <label className="field">Dato<input className="input" type="date" value=${t.date} disabled=${t.source === "bank"} onChange=${e=>editTx(t.id,{date:e.target.value, localDate:true})} /></label>
           <label className="field">Delt udgift<select className="input" value=${t.delt ? "1" : "0"} onChange=${e=>editTx(t.id,{delt:e.target.value==="1"})}><option value="0">Nej</option><option value="1">Ja, tæl halvdelen</option></select></label>
         </div>
+        ${rejse.trips.length > 0 && html`<label className="field">Rejse (deles med søs, uden for budgettet)<select className="input" value=${t.trip || ""} onChange=${e=>editTx(t.id,{trip:e.target.value || null})}>
+          <option value="">Ingen</option>
+          ${rejse.trips.map(tr => html`<option key=${tr.id} value=${tr.id}>${tr.name}</option>`)}
+        </select></label>`}
         <div className="btns"><button className="btn danger" onClick=${()=>deleteTx(t.id)}><${Icon} name="trash" /> Slet</button><button className="btn" onClick=${()=>setOpenTx(null)}>Luk</button></div>
       </div>`}
     </div>`;
@@ -1212,6 +1305,11 @@ function App() {
         <div className="sq sm" style=${{background:"transparent", color:"var(--pos)"}}><${Icon} name="flame" /></div>
         <div><b>${streak} ${streak === 1 ? "måned" : "måneder i træk"}</b> under budget. Bliv ved!</div>
       </div>`}
+      ${subscriptions.length > 0 && html`<button className="tip tap" onClick=${()=>goSub("subs")}>
+        <div className="sq sm" style=${{background:"#534AB733", color: tint("#534AB7", 0.3)}}><${Icon} name="repeat" /></div>
+        <div style=${{flex:1}}><b>${fmt(subsMonthly)} om måneden</b> går til ${subscriptions.length} faste træk. Det er ${fmt(subsMonthly * 12)} om året.</div>
+        <${Icon} name="chevron" />
+      </button>`}
 
       <div className="section">
         <div className="section-head"><h2>Kategorier</h2><button className="link-btn" onClick=${()=>setEditBudget(!editBudget)}>${editBudget ? "Færdig" : "Redigér budget"}</button></div>
@@ -1263,7 +1361,7 @@ function App() {
     if ((+cash || 0) > 0) groups.Kontant = +cash;
     const alloc = Object.entries(groups).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
     const allocTotal = alloc.reduce((s, [,v]) => s + v, 0);
-    const rejsePct = rejse.goal > 0 ? Math.min(100, rejse.saved / rejse.goal * 100) : 0;
+    const rejsePct = rejse.goal > 0 ? Math.min(100, rejseSaved / rejse.goal * 100) : 0;
     const sorted = holdings.slice().sort((a, b) => holdingValue(b) - holdingValue(a));
     return html`<div>
       <div className="hero invest">
@@ -1289,6 +1387,26 @@ function App() {
           : html`<button className="btn soft" disabled=${busy==="saxo"} onClick=${()=> store.json(BRIDGE_KEY) ? startSaxoLogin() : goSub("connections")}>${saxoConnected ? "Log ind" : "Forbind"}</button>`}
       </div>
       <${Msg} k="saxo" />
+
+      ${holdings.length > 0 && (() => {
+        const since = invRange === "Alt" ? "" : addDays(isoDate(new Date()), -RANGES[invRange]);
+        const pts = invHistory.filter(p => p.d >= since);
+        const a = pts[0], b = pts[pts.length - 1];
+        // Return in the period excludes money put in or taken out: change in (value − deposited).
+        const ret = a && b && pts.length > 1 ? (b.v - b.c) - (a.v - a.c) : null;
+        return html`<div className="section">
+          <div className="section-head"><h2>Udvikling</h2>
+            <div className="ranges plain">${[...Object.keys(RANGES), "Alt"].map(r => html`<button key=${r} className=${invRange === r ? "on" : ""} onClick=${()=>setInvRange(r)}>${r}</button>`)}</div></div>
+          <div className="card">
+            <${InvestChart} points=${pts} />
+            <div className="small" style=${{display:"flex",flexWrap:"wrap",gap:"6px 16px",marginTop:10}}>
+              <span><span style=${{display:"inline-block",width:14,height:3,background:"var(--accent)",verticalAlign:"middle",marginRight:6,borderRadius:2}}></span>Værdi ${fmt(invValue)}</span>
+              <span className="muted"><span style=${{display:"inline-block",width:14,borderTop:"2px dashed var(--text-2)",verticalAlign:"middle",marginRight:6}}></span>Indskudt ${fmt(invCost + (+cash || 0))}</span>
+              ${ret != null && html`<span>Afkast i perioden <b className=${ret >= 0 ? "pos" : "neg"}>${ret >= 0 ? "+" : ""}${fmt(ret)}</b></span>`}
+            </div>
+          </div>
+        </div>`;
+      })()}
 
       <div className="section">
         <div className="section-head"><h2>Beholdninger</h2><button className="link-btn" onClick=${()=>{ const h = {id:uid(),name:"Ny beholdning",ticker:"",currency:"DKK",shares:0,avgCost:0,price:0}; setHoldings([...holdings, h]); setOpenHolding(h.id); }}>+ Manuel</button></div>
@@ -1337,11 +1455,11 @@ function App() {
       </div>
 
       <div className="section">
-        <div className="section-head"><h2>Mål</h2><button className="link-btn" onClick=${()=>goSub("wealth")}>Redigér</button></div>
-        <button className="card row tap" style=${{display:"block", borderBottom:"none"}} onClick=${()=>goSub("wealth")}>
+        <div className="section-head"><h2>Mål</h2><button className="link-btn" onClick=${()=>goSub("trips")}>Redigér</button></div>
+        <button className="card row tap" style=${{display:"block", borderBottom:"none"}} onClick=${()=>goSub("trips")}>
           <div style=${{display:"flex",alignItems:"center",gap:12}}>
             <div className="sq" style=${{background:"#EF9F2733", color: tint("#EF9F27", 0.3)}}><${Icon} name="plane" /></div>
-            <div style=${{flex:1,minWidth:0}}><div>Rejsepulje</div><div className="small muted">${fmt(rejse.saved)} af ${fmt(rejse.goal)}</div></div>
+            <div style=${{flex:1,minWidth:0}}><div>Rejsepulje</div><div className="small muted">${fmt(rejseSaved)} af ${fmt(rejse.goal)}${tripsOwed > 0 ? ` · søs mangler ${fmt(tripsOwed)}` : ""}</div></div>
             <div className="num" style=${{fontWeight:600}}>${Math.round(rejsePct)} %</div>
           </div>
           <div className="bar" style=${{height:8, marginTop:10}}><div style=${{width:`${rejsePct}%`, background:"#EF9F27"}}></div></div>
@@ -1359,7 +1477,6 @@ function App() {
   // ---------- "Mere" sub pages ----------
 
   const WealthPage = () => {
-    const rejsePct = rejse.goal>0 ? Math.min(100,(rejse.saved/rejse.goal)*100) : 0;
     const editableRows = (items, setItems, placeholder) => items.map(a => html`<div key=${a.id} className="row">
       <div className="main">${a.source === "bank"
         ? html`<div className="title">${a.name}</div><div className="sub">Fra banken · opdateres automatisk</div>`
@@ -1378,19 +1495,125 @@ function App() {
         <div className="section-head"><h2>Gæld</h2><button className="link-btn" onClick=${()=>setLiabilities([...liabilities,{id:uid(),name:"Ny gæld",value:0}])}>+ Tilføj</button></div>
         ${liabilities.length ? html`<div className="list">${editableRows(liabilities, setLiabilities, "Navn")}</div>` : html`<div className="card empty">Ingen gæld registreret.</div>`}
       </div>
-      <div className="section">
-        <div className="section-head"><h2>Rejsepulje</h2><span className="small muted">med din søster · uden for budgettet</span></div>
-        <div className="card">
-          <div className="grid2">
-            <label className="field">Sparet op (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.saved} onChange=${e=>setRejse({...rejse,saved:+e.target.value})} /></label>
-            <label className="field">Mål (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.goal} onChange=${e=>setRejse({...rejse,goal:+e.target.value})} /></label>
-          </div>
-          <div className="bar" style=${{height:10,marginTop:12}}><div style=${{width:`${rejsePct}%`, background:"#EF9F27"}}></div></div>
-          <div className="small muted" style=${{display:"flex",justifyContent:"space-between",marginTop:6}}><span>${Math.round(rejsePct)} %</span><span>mangler ${fmt(Math.max(0,rejse.goal-rejse.saved))}</span></div>
+    </div>`;
+  };
+
+  const shortDate = (d) => d ? `${+d.slice(8,10)}. ${MONTHS_DA[+d.slice(5,7)-1].slice(0,3)}.` : "";
+  const kv = (label, value, cls = "") => html`<div style=${{display:"flex",justifyContent:"space-between",gap:12}}><span className="muted">${label}</span><span className=${"num " + cls}>${value}</span></div>`;
+
+  const TripsPage = () => {
+    const pct = rejse.goal > 0 ? Math.min(100, rejseSaved / rejse.goal * 100) : 0;
+    const setTrips = (trips) => setRejse({...rejse, trips});
+    const setTrip = (id, patch) => setTrips(rejse.trips.map(tr => tr.id === id ? {...tr, ...patch} : tr));
+    const addTrip = () => {
+      const to = isoDate(new Date());
+      const tr = { id: uid(), name: "Ny rejse", from: addDays(to, -14), to, paidBack: 0 };
+      setTrips([tr, ...rejse.trips]); setPickTrip(tr.id);
+    };
+    const removeTrip = (tr) => {
+      const prevR = rejse, prevT = transactions;
+      setTrips(rejse.trips.filter(x => x.id !== tr.id));
+      setTransactions(transactions.map(t => t.trip === tr.id ? {...t, trip: null} : t));
+      showUndo(`${tr.name} er slettet`, () => { setRejse(prevR); setTransactions(prevT); });
+    };
+    const request = async (tr, s) => {
+      // fmt() already ends in "kr.", which doubles as the full stop.
+      const text = `Hej søs! ${tr.name} kostede i alt ${fmt(s.spent)}, så din halvdel er ${fmt(s.half)}`
+        + (s.repaid > 0 ? ` Du har betalt ${fmt(s.repaid)}, så der mangler ${fmt(s.owed)}` : "")
+        + " Kan du MobilePay mig?";
+      try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e?.name === "AbortError") return; }
+      navigator.clipboard?.writeText(text).then(() => flash("trip-" + tr.id, "Beskeden er kopieret. Sæt den ind i en besked til søs."), () => {});
+    };
+    return html`<div>
+      <div className="card stack">
+        <div style=${{display:"flex",alignItems:"center",gap:12}}>
+          <div className="sq" style=${{background:"#EF9F2733", color: tint("#EF9F27", 0.3)}}><${Icon} name="plane" /></div>
+          <div style=${{flex:1,minWidth:0}}><div>Din ferieopsparing</div><div className="small muted">${fmt(rejseSaved)} af ${fmt(rejse.goal)} · søs sparer det samme op</div></div>
+          <div className="num" style=${{fontWeight:600}}>${Math.round(pct)} %</div>
         </div>
+        <div className="bar" style=${{height:10}}><div style=${{width:`${pct}%`, background:"#EF9F27"}}></div></div>
+        <div className="grid2">
+          <label className="field">Konto<select className="input" value=${rejse.accountId || ""} onChange=${e=>setRejse({...rejse, accountId: e.target.value || null})}>
+            <option value="">Indtast selv</option>
+            ${assets.filter(a => a.source !== "bank").map(a => html`<option key=${a.id} value=${a.id}>${a.name}</option>`)}
+          </select></label>
+          <label className="field">Mål pr. person (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.goal} onChange=${e=>setRejse({...rejse, goal:+e.target.value})} /></label>
+        </div>
+        ${!rejse.accountId && html`<label className="field">Sparet op (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.saved} onChange=${e=>setRejse({...rejse, saved:+e.target.value})} /></label>`}
+        ${tripsOwed > 0 && html`<div className="tip" style=${{marginTop:0}}><div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="coins" /></div><div>Søs mangler at betale <b>${fmt(tripsOwed)}</b> i alt.</div></div>`}
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Rejser</h2><button className="link-btn" onClick=${addTrip}>+ Ny rejse</button></div>
+        ${rejse.trips.length === 0 && html`<div className="card empty">Ingen rejser endnu. Tryk <b>+ Ny rejse</b>, giv den et navn som "Italien", og vælg turens poster. De deles 50/50 med søs og tæller ikke i månedsbudgettet.</div>`}
+        <div className="stack-gap">${rejse.trips.map(tr => {
+          const s = tripStats(tr);
+          const open = pickTrip === tr.id;
+          const late = addDays(tr.to || isoDate(new Date()), 90);
+          // Candidates: the trip's spending, plus money coming in afterwards (søs paying back).
+          const cands = !open ? [] : transactions
+            .filter(t => t.date && t.date >= tr.from && t.description !== RENT_TEXT && !EXCLUDED.includes(t.category) && ((t.amount < 0 && t.date <= tr.to) || (t.amount > 0 && t.date <= late && !INCOME_CATS.slice(0,2).includes(t.category))))
+            .sort((a, b) => a.date.localeCompare(b.date));
+          const subKeys = new Set(subscriptions.map(x => x.key));
+          const freeSpend = cands.filter(t => t.amount < 0 && !t.trip && !subKeys.has(subKey(t.description)));
+          return html`<div key=${tr.id} className="card stack">
+            <input className="input" value=${tr.name} onChange=${e=>setTrip(tr.id, {name: e.target.value})} aria-label="Navn på rejsen" style=${{fontWeight:600}} />
+            <div className="grid2">
+              <label className="field">Fra<input className="input" type="date" value=${tr.from} onChange=${e=>setTrip(tr.id, {from: e.target.value})} /></label>
+              <label className="field">Til<input className="input" type="date" value=${tr.to} onChange=${e=>setTrip(tr.id, {to: e.target.value})} /></label>
+            </div>
+            <div className="stack" style=${{gap:4}}>
+              ${kv(`Turen i alt (${s.txs.filter(t => t.amount < 0).length} poster)`, fmt(s.spent))}
+              ${kv("Din halvdel", fmt(s.half))}
+              ${kv("Søs' halvdel", fmt(s.half))}
+              ${kv("Betalt af søs", fmt(s.repaid), s.repaid > 0 ? "pos" : "")}
+              ${kv(s.owed > 0 ? "Søs mangler" : "Status", s.owed > 0 ? fmt(s.owed) : (s.spent > 0 ? "Gjort op ✓" : "–"), s.owed > 0 ? "neg" : "pos")}
+            </div>
+            <div className="btns">
+              <button className="btn primary" disabled=${!(s.owed > 0)} onClick=${()=>request(tr, s)}>Anmod søs${s.owed > 0 ? ` om ${fmt(s.owed)}` : ""}</button>
+              <button className="btn" onClick=${()=>setPickTrip(open ? null : tr.id)}>${open ? "Færdig" : "Vælg poster"}</button>
+            </div>
+            <${Msg} k=${"trip-" + tr.id} />
+            ${open && html`<div className="stack">
+              <div className="small muted">Sæt flueben ved turens udgifter. Indbetalinger fra søs efter turen kan også vælges – så tæller de som hendes betaling.</div>
+              ${freeSpend.length > 0 && html`<button className="btn soft" onClick=${()=>setTransactions(transactions.map(t => freeSpend.some(f => f.id === t.id) ? {...t, trip: tr.id} : t))}>Vælg alle ${freeSpend.length} udgifter i perioden</button>`}
+              ${cands.length === 0 ? html`<div className="small faint">Ingen poster i perioden. Tjek datoerne.</div>` : html`<div className="list">${cands.map(t => {
+                const other = t.trip && t.trip !== tr.id;
+                return html`<label key=${t.id} className="row" style=${{minHeight:48, cursor: other ? "default" : "pointer", opacity: other ? .5 : 1}}>
+                  <input type="checkbox" style=${{width:18, height:18, accentColor:"var(--accent)"}} checked=${t.trip === tr.id} disabled=${other} onChange=${()=>editTx(t.id, {trip: t.trip === tr.id ? null : tr.id})} />
+                  <div className="main"><div className="title">${t.description}</div><div className="sub">${shortDate(t.date)}${t.amount > 0 ? " · indbetaling" : ""}${other ? " · anden rejse" : ""}</div></div>
+                  <div className=${"end " + amountClass(t.amount)}>${fmt(t.amount)}</div>
+                </label>`;
+              })}</div>`}
+              <label className="field">Betalt af søs udenom banken (kr.)<input className="input" type="number" inputMode="decimal" value=${tr.paidBack || 0} onChange=${e=>setTrip(tr.id, {paidBack: +e.target.value})} /></label>
+              <div className="btns">
+                ${s.owed > 0 && html`<button className="btn soft" onClick=${()=>setTrip(tr.id, {paidBack: (+tr.paidBack || 0) + s.owed})}>Markér resten som betalt</button>`}
+                <button className="btn danger" onClick=${()=>removeTrip(tr)}><${Icon} name="trash" /> Slet rejse</button>
+              </div>
+            </div>`}
+          </div>`;
+        })}</div>
       </div>
     </div>`;
   };
+
+  const SubsPage = () => html`<div>
+    <div className="hero">
+      <div className="label">Faste træk og abonnementer</div>
+      <div className="big"><${CountUp} value=${Math.round(subsMonthly)} /></div>
+      <div className="hm">om måneden · ${fmt(subsMonthly * 12)} om året · ${subscriptions.length} stk.</div>
+    </div>
+    <div className="small muted" style=${{margin:"12px 2px"}}>Fundet ud fra poster, der kommer ca. én gang om måneden med næsten samme beløb. Husleje, opsparing og rejser er ikke med.</div>
+    ${subscriptions.length === 0
+      ? html`<div className="card empty">Ingen faste træk fundet endnu. Der skal være poster fra mindst 2–3 måneder.</div>`
+      : html`<div className="list stagger">${subscriptions.map((x, i) => html`<div key=${x.key} className="row" style=${stag(i)}>
+          <${CatIcon} cat=${x.category} />
+          <div className="main"><div className="title">${x.name}</div><div className="sub">${fmt(x.monthly * 12)} om året · sidst ${shortDate(x.last)} · ${x.months} mdr.</div></div>
+          <div className="end"><div className="num">${fmt(x.monthly)}</div>
+            <button className="link-btn small" onClick=${()=>{ const prev = subsHidden; setSubsHidden([...subsHidden, x.key]); showUndo(`${x.name} er skjult`, () => setSubsHidden(prev)); }}>Ikke et abonnement</button></div>
+        </div>`)}</div>`}
+    ${subsHidden.length > 0 && html`<button className="btn soft block" style=${{marginTop:12}} onClick=${()=>setSubsHidden([])}>Vis ${subsHidden.length} skjulte igen</button>`}
+  </div>`;
 
   const ConnectionsPage = () => {
     const bridgeOk = Boolean(bridge.url && bridge.secret);
@@ -1550,7 +1773,7 @@ function App() {
 
   const MorePage = () => {
     if (sub) {
-      const Sub = { wealth: WealthPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
+      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
       return Sub ? Sub() : null;
     }
     const lastBackup = +store.get(BACKUP_KEY) || 0;
