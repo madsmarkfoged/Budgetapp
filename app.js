@@ -333,6 +333,27 @@ const MEAL_TEMPLATES = [
   ["Kylling og broccoli i parmesanpasta", ["kylling", "pasta", "broccoli", "parmesan"]],
   ["Laksepasta med citron og spinat", ["laks", "pasta", "spinat", "skyr", "citron"]],
 ];
+// Ingredients to pick from under "Retter", grouped like a shop.
+const INGREDIENT_GROUPS = [
+  ["Kød og fisk", ["kylling", "hakket oksekød", "hakket svinekød", "hakket kylling", "kalkun", "bacon", "skinke", "salsiccia", "laks", "tun", "rejer"]],
+  ["Grønt", ["løg", "rødløg", "hvidløg", "gulerødder", "bladselleri", "squash", "peberfrugt", "champignon", "spinat", "broccoli", "cherrytomater", "agurk", "salat", "kartofler", "søde kartofler", "majs", "ærter", "chili", "ingefær", "citron", "avocado", "basilikum"]],
+  ["Mejeri og æg", ["ost", "parmesan", "mozzarella", "fløde", "creme fraiche", "skyr", "græsk yoghurt", "yoghurt", "hytteost", "smør", "mælk", "æg"]],
+  ["Pasta, ris og brød", ["pasta", "spaghetti", "lasagneplader", "ris", "nudler", "couscous", "bulgur", "tortilla", "pitabrød", "burgerboller", "pizzadej"]],
+  ["Dåser, saucer og krydderier", ["hakkede tomater", "tomatpuré", "passata", "tomatsauce", "kokosmælk", "kidneybønner", "kikærter", "røde linser", "bouillon", "pesto", "rødvin", "soja", "karrypasta", "tacokrydderi", "oregano"]],
+];
+// What people usually add to the simple starter versions.
+const MEAL_EXTRAS = {
+  "Spaghetti bolognese": ["gulerødder", "bladselleri", "hvidløg", "tomatpuré", "rødvin", "bouillon", "parmesan", "oregano"],
+  "Lasagne": ["gulerødder", "bladselleri", "hvidløg", "tomatpuré", "mælk", "smør", "mozzarella", "parmesan"],
+  "Bolognese med linser": ["gulerødder", "bladselleri", "hvidløg", "tomatpuré", "parmesan"],
+  "Chili con carne": ["peberfrugt", "hvidløg", "chili", "tomatpuré", "majs", "creme fraiche"],
+  "Tacos": ["peberfrugt", "majs", "avocado", "creme fraiche", "tacokrydderi", "rødløg"],
+  "Kylling i karry": ["karrypasta", "peberfrugt", "hvidløg", "ingefær", "spinat"],
+  "Wok med kylling": ["peberfrugt", "soja", "hvidløg", "ingefær", "chili"],
+  "Pasta med kylling og pesto": ["spinat", "cherrytomater", "parmesan"],
+  "Burger": ["rødløg", "bacon", "agurk"],
+  "Pizza": ["mozzarella", "champignon", "peberfrugt", "oregano"],
+};
 const PROTEIN_MEALS = new Set(["Kyllingepasta med hytteostsauce", "Bolognese med linser", "Tunpasta med cherrytomater", "Kalkunpasta med pesto og spinat", "Kylling og broccoli i parmesanpasta", "Laksepasta med citron og spinat"]);
 const WEEKDAYS = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
 
@@ -354,6 +375,11 @@ const NORMAL_PRICES = {
   "ingefær": 8, "hvidløg": 8, "yoghurt": 22, "agurk": 9, "salsiccia": 55, "fløde": 16, "basilikum": 15,
   "hytteost": 16, "spinat": 15, "tun": 14, "cherrytomater": 18, "rødløg": 10, "skyr": 20, "kalkun": 55,
   "parmesan": 30, "citron": 6, "græsk yoghurt": 26,
+  "hakket kylling": 45, "rejer": 40, "gulerødder": 10, "bladselleri": 12, "squash": 10, "peberfrugt": 10,
+  "champignon": 15, "søde kartofler": 20, "majs": 10, "ærter": 15, "chili": 8, "avocado": 10, "mozzarella": 15,
+  "creme fraiche": 12, "smør": 25, "mælk": 12, "couscous": 15, "bulgur": 15, "pitabrød": 15, "tomatpuré": 8,
+  "passata": 12, "kikærter": 10, "bouillon": 15, "rødvin": 50, "soja": 15, "karrypasta": 20, "tacokrydderi": 10,
+  "oregano": 15,
 };
 const normalPrice = (term, offers) =>
   NORMAL_PRICES[term.toLowerCase()] || (offers || []).find(o => o.before && offerFits(term, o.heading))?.before || 25;
@@ -397,6 +423,37 @@ function planWeek(pool, offersByTerm, stores, count, staples = []) {
   return { ...options[0], compare: options.slice(0, 4).map(o => ({ stores: o.stores, total: o.total })) };
 }
 
+// ---------------- Saxo ledger: deposits, trades, dividends and costs ----------------
+// Saxo's report endpoints allow calls from the app's origin, so these go straight from the browser with the
+// user's own (read-only) login; the worker isn't involved. The token works on live or sim, not both.
+const SAXO_GATEWAYS = ["https://gateway.saxobank.com/openapi", "https://gateway.saxobank.com/sim/openapi"];
+const BOOKING_LABEL = {
+  "Cash Amount": "Indbetaling", "Share Amount": "Handel", "Commission": "Kurtage", "Interest": "Rente",
+  "Corporate Actions - Cash Dividends": "Udbytte", "Corporate Actions - Withholding Tax": "Udbytteskat",
+};
+async function fetchSaxoLedger(token) {
+  const get = async (base, path) => {
+    const r = await fetch(base + path, { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) throw Object.assign(new Error(`Saxo svarede ${r.status}`), { status: r.status });
+    return r.json();
+  };
+  let base = null, me = null;
+  for (const b of SAXO_GATEWAYS) { try { me = await get(b, "/port/v1/clients/me"); base = b; break; } catch (e) { if (e.status !== 401) throw e; } }
+  if (!base) throw new Error("Saxo-login er udløbet.");
+  const q = new URLSearchParams({ FromDate: "2010-01-01", ToDate: isoDate(new Date()) });
+  const r = await get(base, `/cs/v1/reports/bookings/${encodeURIComponent(me.ClientKey)}?${q}`);
+  const rows = (r.Data || []).map(b => ({
+    date: (b.Date || "").slice(0, 10), type: b.BkAmountType, label: BOOKING_LABEL[b.BkAmountType] || b.BkAmountType,
+    name: b.InstrumentDescription || "", amount: +(b.AmountAccountCurrency ?? b.Amount) || 0, account: b.AccountCurrency || "DKK",
+  })).sort((a, b) => b.date.localeCompare(a.date));
+  const sum = (type) => rows.filter(x => x.type === type).reduce((s, x) => s + x.amount, 0);
+  return {
+    fetched: new Date().toISOString(), rows,
+    deposits: sum("Cash Amount"), trades: sum("Share Amount"), commission: sum("Commission"),
+    dividends: sum("Corporate Actions - Cash Dividends"), tax: sum("Corporate Actions - Withholding Tax"), interest: sum("Interest"),
+  };
+}
+
 // Holding type for the allocation bar: Saxo tells us; for manual holdings guess from the name.
 const TYPE_LABEL = { Etf: "ETF", Stock: "Aktier", MutualFund: "Fonde", Bond: "Obligationer" };
 const TYPE_COLOR = { ETF: "#8B7BFF", Aktier: "#4FC3F7", Fonde: "#F2B35B", Obligationer: "#F48FB1", Andet: "#90A4AE", Kontant: "#9CF0C8" };
@@ -423,6 +480,7 @@ function normalizeData(d) {
   if (d.subsShare && typeof d.subsShare === "object") out.subsShare = d.subsShare;
   if (d.shop) out.shop = {...DEFAULT_SHOP, ...d.shop};
   if (Array.isArray(d.invHistory)) out.invHistory = d.invHistory;
+  if (d.saxoLedger) out.saxoLedger = d.saxoLedger;
   if (d.sync) out.sync = d.sync;
   if (Array.isArray(d.history)) out.history = d.history;
   if (d.rent) out.rent = {...DEFAULT_RENT, ...d.rent};
@@ -689,10 +747,14 @@ function App() {
   const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "", url: "" });
   const [planBusy, setPlanBusy] = useState(false);
   const [stapleDraft, setStapleDraft] = useState("");
-  const [pickMeal, setPickMeal] = useState(null); // index of the plan meal whose "Vælg selv" list is open
+  const [pickMeal, setPickMeal] = useState(null);
+  const [ingFor, setIngFor] = useState(null);   // name of the meal whose ingredient picker is open (a starter meal gets an id only once edited)
+  const [ingSearch, setIngSearch] = useState(""); // index of the plan meal whose "Vælg selv" list is open
   const [foodBudgetEdit, setFoodBudgetEdit] = useState(false);
   const [showFoodTx, setShowFoodTx] = useState(false);
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
+  const [saxoLedger, setSaxoLedger] = useState(init.saxoLedger || null);
+  const [showLedger, setShowLedger] = useState(false);
   const [saveError, setSaveError] = useState(false);
 
   // ui state
@@ -767,13 +829,14 @@ function App() {
     if (d.subsShare) setSubsShare(d.subsShare);
     if (d.shop) setShop(d.shop);
     if (d.invHistory) setInvHistory(d.invHistory);
+    if (d.saxoLedger) setSaxoLedger(d.saxoLedger);
   };
   const loadData = () => applyData(readStored());
 
   useEffect(() => {
-    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop}));
+    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop,saxoLedger}));
     setSaveError(!ok);
-  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, invHistory, shop]);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, invHistory, shop, saxoLedger]);
 
   useEffect(() => { navigator.storage?.persist?.().catch(()=>{}); }, []);
   useEffect(() => {
@@ -803,7 +866,11 @@ function App() {
   const invCost = holdings.reduce((s,h)=>s+holdingCost(h),0);
   const invSecurities = holdings.reduce((s,h)=>s+holdingValue(h),0);
   const invValue = invSecurities + (+cash||0);
-  const invGain = invSecurities - invCost;
+  // What was actually put in: Saxo's deposits when we have them. The cost basis of current holdings
+  // misses closed trades (and their losses), so it can be off by thousands.
+  const invPutIn = saxoLedger?.deposits > 0 ? saxoLedger.deposits : null;
+  const invGain = invPutIn != null ? invSecurities + (+cash || 0) - invPutIn : invSecurities - invCost;
+  const invBasis = invPutIn ?? invCost;
   const sumAssets = assets.reduce((s,a)=>s+(+a.value||0),0);
   const sumLiab = liabilities.reduce((s,l)=>s+(+l.value||0),0);
   const netWorth = sumAssets + invValue - sumLiab;
@@ -823,13 +890,13 @@ function App() {
   useEffect(() => {
     if (!holdings.length || !(invValue > 0)) return;
     const today = isoDate(new Date());
-    const p = { d: today, v: Math.round(invValue), c: Math.round(invCost + (+cash || 0)) };
+    const p = { d: today, v: Math.round(invValue), c: Math.round(invPutIn ?? (invCost + (+cash || 0))) };
     setInvHistory(h => {
       const last = h[h.length-1];
       if (last && last.d === today) return last.v === p.v && last.c === p.c ? h : [...h.slice(0,-1), p];
       return [...h, p].slice(-1500);
     });
-  }, [invValue, invCost]);
+  }, [invValue, invCost, invPutIn]);
 
   const recurringIn = detectRecurring(transactions, 1);
   const subscriptionsRaw = detectSubscriptions(transactions, subsHidden);
@@ -1117,6 +1184,7 @@ function App() {
     try { p = await callBridge("/saxo/portfolio", { access_token: t.access }); }
     catch (e) { if (e.code === "saxo_login") { setSaxoTokens(null); return false; } throw e; }
     const r = applySaxoPortfolio(p);
+    try { setSaxoLedger(await fetchSaxoLedger(t.access)); } catch {}
     if (r.currencyWarning) flash("saxo", `Bemærk: din Saxo-konto er i ${r.currencyWarning}, ikke DKK. Kontantbeløbet er ikke omregnet.`, 10000);
     return true;
   };
@@ -1281,7 +1349,7 @@ function App() {
   // ---------- backup ----------
 
   const exportData = () => {
-    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop,exported:new Date().toISOString()};
+    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop,saxoLedger,exported:new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1561,8 +1629,8 @@ function App() {
         <div className="label">${sync.saxo ? "Depot hos Saxo" : "Depotværdi"}</div>
         <div className="big"><${CountUp} value=${Math.round(invValue)} /></div>
         <div className="hero-row">
-          ${invCost > 0 && html`<span className=${"chip " + (invGain >= 0 ? "up" : "down")}>${pctf(invGain/invCost*100)}</span>`}
-          <span className="hm">${invGain >= 0 ? "+" : ""}${fmt(invGain)} i alt</span>
+          ${invBasis > 0 && html`<span className=${"chip " + (invGain >= 0 ? "up" : "down")}>${pctf(invGain/invBasis*100)}</span>`}
+          <span className="hm">${invGain >= 0 ? "+" : ""}${fmt(invGain)} i alt${invPutIn != null ? ` · indsat ${fmt(invPutIn)}` : ""}</span>
         </div>
         ${allocTotal > 0 && html`
           <div className="alloc">${alloc.map(([k, v], i) => html`<div key=${k} style=${{flex: v, background: TYPE_COLOR[k] || TYPE_COLOR.Andet, animationDelay:`${i*80}ms`}}></div>`)}</div>
@@ -1594,12 +1662,31 @@ function App() {
             <${InvestChart} points=${pts} />
             <div className="small" style=${{display:"flex",flexWrap:"wrap",gap:"6px 16px",marginTop:10}}>
               <span><span style=${{display:"inline-block",width:14,height:3,background:"var(--accent)",verticalAlign:"middle",marginRight:6,borderRadius:2}}></span>Værdi ${fmt(invValue)}</span>
-              <span className="muted"><span style=${{display:"inline-block",width:14,borderTop:"2px dashed var(--text-2)",verticalAlign:"middle",marginRight:6}}></span>Indskudt ${fmt(invCost + (+cash || 0))}</span>
+              <span className="muted"><span style=${{display:"inline-block",width:14,borderTop:"2px dashed var(--text-2)",verticalAlign:"middle",marginRight:6}}></span>${invPutIn != null ? "Indsat" : "Indskudt"} ${fmt(invPutIn ?? (invCost + (+cash || 0)))}</span>
               ${ret != null && html`<span>Afkast i perioden <b className=${ret >= 0 ? "pos" : "neg"}>${ret >= 0 ? "+" : ""}${fmt(ret)}</b></span>`}
             </div>
           </div>
         </div>`;
       })()}
+
+      ${saxoLedger && html`<div className="section">
+        <div className="section-head"><h2>Indbetalinger og handler</h2><span className="small faint">fra Saxo ${shortDate(saxoLedger.fetched.slice(0, 10))}</span></div>
+        <div className="card stack" style=${{gap:4}}>
+          ${kv("Indsat", fmt(saxoLedger.deposits))}
+          ${kv("Købt og solgt for", fmt(saxoLedger.trades))}
+          ${kv("Kurtage", fmt(saxoLedger.commission))}
+          ${saxoLedger.dividends !== 0 && kv("Udbytte", fmt(saxoLedger.dividends), "pos")}
+          ${saxoLedger.tax !== 0 && kv("Udbytteskat", fmt(saxoLedger.tax))}
+          ${saxoLedger.interest !== 0 && kv("Renter", fmt(saxoLedger.interest))}
+          <div style=${{borderTop:"0.5px solid var(--border)", margin:"4px 0"}}></div>
+          ${kv("Afkast (værdi nu − indsat)", `${invGain >= 0 ? "+" : ""}${fmt(invGain)}`, invGain >= 0 ? "pos" : "neg")}
+          <button className="link-btn small" style=${{alignSelf:"flex-start", marginTop:6}} onClick=${()=>setShowLedger(!showLedger)}>${showLedger ? "Skjul" : `Se alle ${saxoLedger.rows.length} posteringer`}</button>
+        </div>
+        ${showLedger && html`<div className="list" style=${{marginTop:8}}>${saxoLedger.rows.map((x, i) => html`<div key=${i} className="row" style=${{minHeight:46}}>
+          <div className="main"><div className="title">${x.label}${x.name ? ` · ${x.name}` : ""}</div><div className="sub">${shortDate(x.date)} ${x.date.slice(0, 4)}</div></div>
+          <div className=${"end " + amountClass(x.amount)}>${fmt(x.amount)}</div>
+        </div>`)}</div>`}
+      </div>`}
 
       <div className="section">
         <div className="section-head"><h2>Beholdninger</h2><button className="link-btn" onClick=${()=>{ const h = {id:uid(),name:"Ny beholdning",ticker:"",currency:"DKK",shares:0,avgCost:0,price:0}; setHoldings([...holdings, h]); setOpenHolding(h.id); }}>+ Manuel</button></div>
@@ -2047,8 +2134,25 @@ function App() {
       const url = /^https?:\/\//.test(mealDraft.url.trim()) ? mealDraft.url.trim() : null;
       setShop({...shop, meals: [...meals, { id: uid(), name, ingredients, fav: true, url }]}); setMealDraft({ name: "", ingredients: "", url: "" });
     };
+    const IngredientPicker = (m) => {
+      const have = new Set(m.ingredients);
+      const add = (t) => { const v = t.trim().toLowerCase(); if (v && !have.has(v)) update(m, { ingredients: [...m.ingredients, v] }); };
+      const q = ingSearch.trim().toLowerCase();
+      const chip = (t) => html`<button key=${t} className="chip info" onClick=${()=>add(t)}>+ ${t}</button>`;
+      const extras = (MEAL_EXTRAS[m.name] || []).filter(t => !have.has(t));
+      const groups = INGREDIENT_GROUPS.map(([g, list]) => [g, list.filter(t => !have.has(t) && (!q || t.includes(q)))]).filter(([, l]) => l.length);
+      const known = INGREDIENT_GROUPS.some(([, l]) => l.includes(q));
+      return html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
+        <form onSubmit=${e=>{ e.preventDefault(); if (q) { add(q); setIngSearch(""); } }}>
+          <input className="input sm" value=${ingSearch} onChange=${e=>setIngSearch(e.target.value)} placeholder="Søg, eller skriv en ny ingrediens" aria-label="Søg ingrediens" />
+        </form>
+        ${q && !known && !have.has(q) && html`<div><button className="chip info" onClick=${()=>{ add(q); setIngSearch(""); }}>+ Tilføj "${q}"</button></div>`}
+        ${!q && extras.length > 0 && html`<div><div className="small muted" style=${{marginBottom:5}}>Forslag til ${m.name.toLowerCase()}</div><div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${extras.map(chip)}</div></div>`}
+        ${groups.map(([g, list]) => html`<div key=${g}><div className="small muted" style=${{marginBottom:5}}>${g}</div><div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${list.map(chip)}</div></div>`)}
+      </div>`;
+    };
     return html`<div>
-      <div className="small muted" style=${{margin:"0 2px 10px"}}>♥ = vælges oftere. <b>Gider ikke</b> = kommer aldrig med i madplanen. Du kan rette ingredienserne – de bruges til at finde tilbud.</div>
+      <div className="small muted" style=${{margin:"0 2px 10px"}}>♥ = vælges oftere. <b>Gider ikke</b> = kommer aldrig med i madplanen. Tryk ✕ for at fjerne en ingrediens og <b>+ Ingrediens</b> for at tilføje – de bruges til at finde tilbud.</div>
       <div className="list">${allMeals.map(m => html`<div key=${m.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: m.skip ? .45 : 1}}>
         <button className="icon-btn" style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name}: yndlingsret`} disabled=${m.skip}
           onClick=${()=>update(m, { fav: !m.fav })}>${m.fav ? "♥" : "♡"}</button>
@@ -2056,7 +2160,12 @@ function App() {
           <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${PROTEIN_MEALS.has(m.name) && html` <span className="chip info" style=${{fontSize:11, padding:"1px 7px"}}>Proteinrig</span>`}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
           ${m.skip
             ? html`<div className="sub">Kommer ikke med i madplanen</div>`
-            : html`<input className="input sm" style=${{marginTop:6}} defaultValue=${m.ingredients.join(", ")} aria-label=${`Ingredienser i ${m.name}`} onBlur=${e=>{ const ing = parse(e.target.value); if (ing.length && ing.join(",") !== m.ingredients.join(",")) update(m, { ingredients: ing }); }} />`}
+            : html`<div style=${{display:"flex", flexWrap:"wrap", gap:5, marginTop:6}}>
+                ${m.ingredients.map(t => html`<button key=${t} className="chip" style=${{border:"1px solid var(--border)"}} aria-label=${`Fjern ${t} fra ${m.name}`}
+                  onClick=${()=>{ if (m.ingredients.length > 1) update(m, { ingredients: m.ingredients.filter(x => x !== t) }); }}>${t}${m.ingredients.length > 1 ? " ✕" : ""}</button>`)}
+                <button className="chip info" aria-expanded=${ingFor === m.name} onClick=${()=>{ setIngFor(ingFor === m.name ? null : m.name); setIngSearch(""); }}>${ingFor === m.name ? "Færdig" : "+ Ingrediens"}</button>
+              </div>
+              ${ingFor === m.name && IngredientPicker(m)}`}
         </div>
         <div className="end" style=${{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
           <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
