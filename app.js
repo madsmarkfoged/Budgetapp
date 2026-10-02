@@ -689,6 +689,8 @@ function App() {
   const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "", url: "" });
   const [planBusy, setPlanBusy] = useState(false);
   const [stapleDraft, setStapleDraft] = useState("");
+  const [foodBudgetEdit, setFoodBudgetEdit] = useState(false);
+  const [showFoodTx, setShowFoodTx] = useState(false);
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saveError, setSaveError] = useState(false);
 
@@ -2058,7 +2060,38 @@ function App() {
     </div>`;
   };
 
+  // Food budget for the running budget month: same numbers as the Budget page ("Mad & dagligvarer").
+  const FOOD_CAT = "Mad & dagligvarer";
+  const FoodBudget = () => {
+    const ym = currentBudgetMonth(), st = monthStats(ym), pay = nextPayday();
+    const budget = +budgets[FOOD_CAT] || 0, spent = st.byCat[FOOD_CAT] || 0, left = budget - spent;
+    const pct = budget > 0 ? Math.min(100, spent / budget * 100) : 0;
+    const planTotal = shop.plan?.compare && shop.plan.created >= addDays(isoDate(new Date()), -7) ? shop.plan.total : null;
+    const after = planTotal != null ? left - planTotal : null;
+    const buys = transactions.filter(t => t.category === FOOD_CAT && !t.trip && t.amount < 0 && budgetMonth(t.date, t.amount, t.category) === ym)
+      .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    return html`<div className="card stack" style=${{marginBottom:12}}>
+      <div style=${{display:"flex", alignItems:"baseline", gap:8}}>
+        <div style=${{flex:1}}>
+          <div className="small muted">Madbudget · ${monthName(ym).toLowerCase()}</div>
+          <div style=${{fontSize:24, fontWeight:650}} className=${left < 0 ? "neg" : ""}>${fmt(Math.abs(left))} <span className="small muted" style=${{fontWeight:400}}>${left < 0 ? "over budget" : "tilbage"}</span></div>
+        </div>
+        <button className="link-btn small" onClick=${()=>setFoodBudgetEdit(!foodBudgetEdit)}>${foodBudgetEdit ? "Færdig" : "Ret budget"}</button>
+      </div>
+      ${foodBudgetEdit && html`<label className="field">Budget til mad og dagligvarer pr. måned (kr.)<input className="input" type="number" inputMode="decimal" value=${budget} onChange=${e=>setBudgets({...budgets, [FOOD_CAT]: +e.target.value})} /></label>`}
+      <div className="bar" style=${{height:8}}><div style=${{width:`${pct}%`, background: left < 0 ? "var(--neg)" : CAT_COLORS[FOOD_CAT]}}></div></div>
+      <div className="small muted">Brugt ${fmt(spent)} af ${fmt(budget)}${left > 0 && pay.days > 0 ? ` · ${fmt(left / pay.days)} pr. dag i ${pay.days} dage` : ""}</div>
+      ${after != null && html`<div className=${"small " + (after < 0 ? "neg" : "")}>Madplanen koster ca. ${fmt(Math.round(planTotal))} – ${after < 0 ? html`<b>${fmt(-after)} mere end du har tilbage</b>` : html`så har du ca. <b>${fmt(after)}</b> tilbage`}.</div>`}
+      ${buys.length > 0 && html`<button className="link-btn small" style=${{alignSelf:"flex-start"}} onClick=${()=>setShowFoodTx(!showFoodTx)}>${showFoodTx ? "Skjul køb" : `Se ${buys.length} køb i ${monthName(ym).toLowerCase()}`}</button>`}
+      ${showFoodTx && html`<div className="list">${buys.map(t => html`<div key=${t.id} className="row" style=${{minHeight:44}}>
+        <div className="main"><div className="title">${prettyName(t.description)}</div><div className="sub">${shortDate(t.date)}</div></div>
+        <div className="end num">${fmt(t.amount)}</div>
+      </div>`)}</div>`}
+    </div>`;
+  };
+
   const FoodPage = () => html`<div>
+    ${FoodBudget()}
     <div className="seg" role="tablist">${[["plan", "Madplan"], ["list", `Indkøbsliste${shop.items.filter(i => !i.done).length ? ` (${shop.items.filter(i => !i.done).length})` : ""}`], ["meals", `Retter${favMeals.length ? ` (${favMeals.length})` : ""}`]].map(([id, label]) =>
       html`<button key=${id} role="tab" aria-selected=${foodTab === id} className=${foodTab === id ? "on" : ""} onClick=${()=>setFoodTab(id)}>${label}</button>`)}</div>
     ${foodTab === "plan" ? PlanTab() : foodTab === "list" ? ShopPage() : MealsTab()}
