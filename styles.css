@@ -308,3 +308,8 @@ select.input { appearance: auto; }
 .privacy input[type="number"] { filter: blur(6px); }
 .privacy input[type="number"]:focus { filter: none; }
 .privacy-btn[aria-pressed="true"] { color: var(--accent); }
+
+/* segmented control (Mad: Madplan / Indkøbsliste / Retter) */
+.seg { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--surface); margin-bottom: 12px; }
+.seg button { flex: 1; border: none; background: none; color: var(--text-2); font: inherit; font-size: 13px; font-weight: 500; padding: 8px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+.seg button.on { background: var(--accent-bg); color: var(--accent); }

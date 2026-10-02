@@ -281,7 +281,7 @@ const TJEK_SEARCH = "https://squid-api.tjek.com/v2/offers/search";
 const CHAINS = ["REMA 1000", "Netto", "Lidl", "Føtex", "Bilka", "Coop 365", "SuperBrugsen", "Kvickly", "Dagli'Brugsen", "Meny", "Spar", "Løvbjerg", "Min Købmand", "Lagkagehuset", "7-Eleven"];
 const AARHUS = { lat: 56.1572, lng: 10.2107, place: "Aarhus C" };
 const STAPLES = ["Mælk", "Æg", "Brød", "Kaffe", "Smør", "Ost", "Kylling", "Hakket oksekød", "Pasta", "Ris", "Bananer", "Yoghurt", "Toiletpapir"];
-const DEFAULT_SHOP = { items: [], stores: null, ...AARHUS };
+const DEFAULT_SHOP = { items: [], stores: null, meals: [], days: 5, plan: null, ...AARHUS };
 const kr = (n) => new Intl.NumberFormat("da-DK", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(n) + " kr.";
 const chainOf = (dealerName) => CHAINS.find(c => (dealerName || "").toLowerCase().startsWith(c.toLowerCase())) || dealerName;
 
@@ -309,6 +309,56 @@ async function searchOffers(query, { lat, lng }) {
       store: chainOf(o.dealer?.name), from: o.run_from, till: o.run_till, image: o.images?.thumb || null,
     }));
   // Kept in Tjek's order (best match first): the cheapest hit for "kaffe" is often capsules, not coffee.
+}
+
+// Starter meals to pick favourites from; each ingredient is also the offer search term.
+const MEAL_TEMPLATES = [
+  ["Kylling i karry", ["kylling", "ris", "kokosmælk", "løg"]],
+  ["Spaghetti bolognese", ["hakket oksekød", "spaghetti", "hakkede tomater", "løg"]],
+  ["Chili con carne", ["hakket oksekød", "kidneybønner", "hakkede tomater", "ris"]],
+  ["Tacos", ["hakket oksekød", "tortilla", "ost", "salat"]],
+  ["Pasta med kylling og pesto", ["kylling", "pasta", "pesto"]],
+  ["Wok med kylling", ["kylling", "nudler", "wokgrøntsager"]],
+  ["Lasagne", ["hakket oksekød", "lasagneplader", "hakkede tomater", "ost"]],
+  ["Laks med kartofler", ["laks", "kartofler", "broccoli"]],
+  ["Frikadeller med kartofler", ["hakket svinekød", "kartofler", "æg"]],
+  ["Burger", ["burgerboller", "hakket oksekød", "ost", "salat"]],
+  ["Pizza", ["pizzadej", "skinke", "ost", "tomatsauce"]],
+  ["Omelet med bacon", ["æg", "bacon", "ost"]],
+];
+const WEEKDAYS = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
+
+// An offer fits an ingredient when every word of the ingredient starts a word in the offer heading
+// ("hakket oksekød" ↔ "Hakket oksekød 8-12 %"), so "ris" doesn't match "pris".
+function offerFits(term, heading) {
+  const h = " " + (heading || "").toLowerCase().replace(/[^a-zæøå0-9]+/g, " ");
+  return term.toLowerCase().split(/\s+/).filter(Boolean).every(w => h.includes(" " + w));
+}
+
+// Week plan from favourite meals and this week's offers: pick the 1–2 of the user's stores where most
+// ingredients are on offer, then the meals with most ingredients on offer there.
+function planMeals(favorites, offersByTerm, stores, count) {
+  const terms = [...new Set(favorites.flatMap(m => m.ingredients))];
+  // First fitting offer per store per ingredient, in Tjek's relevance order.
+  const best = {};
+  for (const t of terms) {
+    best[t] = {};
+    for (const o of offersByTerm[t] || []) if (stores.includes(o.store) && !best[t][o.store] && offerFits(t, o.heading)) best[t][o.store] = o;
+  }
+  const pick = (t, set) => set.map(st => best[t][st]).filter(Boolean).sort((a, b) => a.price - b.price)[0] || null;
+  const score = (set) => terms.reduce((s, t) => { const o = pick(t, set); return s + (o ? 1 + Math.max(0, (o.before || 0) - o.price) / 50 : 0); }, 0);
+  const singles = stores.map(st => [st]);
+  const pairs = stores.flatMap((a, i) => stores.slice(i + 1).map(b => [a, b]));
+  const top = (list) => list.map(set => ({ set, sc: score(set) })).sort((a, b) => b.sc - a.sc)[0];
+  const one = top(singles), two = top(pairs);
+  // A second store is only worth the trip if it adds at least two ingredients on offer.
+  const chosen = two && one && two.sc >= one.sc + 2 ? two.set : one ? one.set : [];
+  const rated = favorites.map(m => {
+    const items = m.ingredients.map(t => ({ term: t, offer: pick(t, chosen) }));
+    const hits = items.filter(i => i.offer).length;
+    return { meal: m, items, rank: hits / Math.max(1, items.length) + hits * 0.01 };
+  }).sort((a, b) => b.rank - a.rank);
+  return { stores: chosen, meals: rated.slice(0, count) };
 }
 
 // Holding type for the allocation bar: Saxo tells us; for manual holdings guess from the name.
@@ -558,6 +608,7 @@ const PAGES = [
   { id: "tx", label: "Poster", icon: "list" },
   { id: "budget", label: "Budget", icon: "donut" },
   { id: "invest", label: "Invest.", icon: "trend" },
+  { id: "food", label: "Mad", icon: "food" },
   { id: "more", label: "Mere", icon: "dots" },
 ];
 
@@ -565,7 +616,6 @@ const MORE_PAGES = [
   { id: "wealth", label: "Formue og gæld", icon: "wallet", sub: "Konti og gæld" },
   { id: "trips", label: "Rejsepulje", icon: "plane", sub: "Ferieopsparing og rejser med søs" },
   { id: "subs", label: "Abonnementer", icon: "repeat", sub: "Faste træk hver måned" },
-  { id: "shop", label: "Tilbud og indkøb", icon: "cart", sub: "Indkøbsliste ud fra ugens tilbud" },
   { id: "connections", label: "Bankforbindelser", icon: "bank", sub: "Sparekassen Kronjylland og Saxo" },
   { id: "ai", label: "AI-analyse", icon: "spark", sub: "Råd baseret på dine tal" },
   { id: "import", label: "Import og værktøjer", icon: "upload", sub: "CSV, fast husleje, kategorier" },
@@ -599,6 +649,9 @@ function App() {
   const [shop, setShop] = useState(init.shop || DEFAULT_SHOP);
   const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
   const [shopDraft, setShopDraft] = useState("");
+  const [foodTab, setFoodTab] = useState("plan");
+  const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "" });
+  const [planBusy, setPlanBusy] = useState(false);
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saveError, setSaveError] = useState(false);
 
@@ -741,6 +794,13 @@ function App() {
   const recurringIn = detectRecurring(transactions, 1);
   const subscriptionsRaw = detectSubscriptions(transactions, subsHidden);
   // subsShare[subKey] is the key of the payment-in that covers part of it, or "none"; unset means guess.
+  const [termOffers, setTermOffers] = useState({}); // ingredient -> offers (this session)
+  const offersFor = async (term) => {
+    if (termOffers[term]) return termOffers[term];
+    const list = await searchOffers(term, shop).catch(() => []);
+    setTermOffers(m => ({...m, [term]: list}));
+    return list;
+  };
   const loadOffers = async (item) => {
     setOffers(m => ({...m, [item.id]: {loading: true}}));
     try { const list = await searchOffers(item.name, shop); setOffers(m => ({...m, [item.id]: {list}})); }
@@ -748,8 +808,8 @@ function App() {
   };
   // Offers aren't stored; fetch them for the open list whenever the shopping page is shown.
   useEffect(() => {
-    if (page === "more" && sub === "shop") shop.items.filter(i => !i.done && !offers[i.id]).forEach(loadOffers);
-  }, [page, sub, shop.lat, shop.lng]);
+    if (page === "food") shop.items.filter(i => !i.done && !offers[i.id]).forEach(loadOffers);
+  }, [page, foodTab, shop.items.length, shop.lat, shop.lng]);
 
   const subscriptions = subscriptionsRaw.map(x => {
     const pick = subsShare[x.key];
@@ -1715,9 +1775,23 @@ function App() {
   </div>`;
   };
 
+  const detectedStores = usualStores(transactions);
+  const shopStores = shop.stores || (detectedStores.length ? detectedStores : ["REMA 1000", "Netto", "Lidl"]);
+  const StoresBlock = () => {
+    const toggleStore = (c) => setShop({...shop, stores: shopStores.includes(c) ? shopStores.filter(x => x !== c) : [...shopStores, c]});
+    const useLocation = () => navigator.geolocation?.getCurrentPosition(
+      (p) => { const lat = Math.round(p.coords.latitude * 100) / 100, lng = Math.round(p.coords.longitude * 100) / 100; setShop({...shop, lat, lng, place: "din placering"}); setOffers({}); setTermOffers({}); flash("shop", "Placering opdateret."); },
+      () => flash("shop", "Placeringen blev ikke delt. Bruger Aarhus C."));
+    return html`<div className="section">
+      <div className="section-head"><h2>Mine butikker</h2><button className="link-btn" onClick=${useLocation}>Brug min placering</button></div>
+      <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${CHAINS.map(c => html`<button key=${c} className=${"chip " + (shopStores.includes(c) ? "info" : "")} style=${shopStores.includes(c) ? {} : {border:"1px solid var(--border)"}} aria-pressed=${shopStores.includes(c)} onClick=${()=>toggleStore(c)}>${shopStores.includes(c) ? "✓ " : ""}${c}</button>`)}</div>
+      <div className="small faint" style=${{marginTop:6}}>${!shop.stores && detectedStores.length > 0 ? "Valgt ud fra hvor du har handlet de sidste 3 måneder. " : ""}Tilbud inden for 10 km af ${shop.place}.</div>
+      <${Msg} k="shop" />
+    </div>`;
+  };
+
   const ShopPage = () => {
-    const detected = usualStores(transactions);
-    const stores = shop.stores || (detected.length ? detected : ["REMA 1000", "Netto", "Lidl"]);
+    const stores = shopStores;
     const setItems = (items) => setShop({...shop, items});
     const inStores = (list) => (list || []).filter(o => stores.includes(o.store));
     const load = loadOffers;
@@ -1728,12 +1802,8 @@ function App() {
       setItems([...shop.items, item]); setShopDraft(""); load(item);
     };
     const refreshAll = () => shop.items.filter(i => !i.done).forEach(load);
-    const toggleStore = (c) => { const cur = stores; setShop({...shop, stores: cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c]}); };
-    const useLocation = () => navigator.geolocation?.getCurrentPosition(
-      (p) => { const lat = Math.round(p.coords.latitude * 100) / 100, lng = Math.round(p.coords.longitude * 100) / 100; setShop({...shop, lat, lng, place: "din placering"}); setOffers({}); flash("shop", "Placering opdateret. Tryk Opdater tilbud."); },
-      () => flash("shop", "Placeringen blev ikke delt. Bruger Aarhus C."));
-    // Each item's chosen offer: the one the user tapped, else the cheapest in their stores.
-    const chosen = (item) => { const l = inStores(offers[item.id]?.list); return l.find(o => o.id === item.pick) || l[0] || null; };
+    // Each item's chosen offer: the one the user tapped, else the best match in their stores.
+    const chosen = (item) => { const l = inStores(offers[item.id]?.list); return l.find(o => o.id === item.pick) || l.find(o => offerFits(item.name, o.heading)) || l[0] || null; };
     const groups = {};
     for (const it of shop.items) { const o = chosen(it); const k = o ? o.store : "Uden tilbud"; (groups[k] ||= []).push({ it, o }); }
     const order = Object.keys(groups).sort((a, b) => (a === "Uden tilbud") - (b === "Uden tilbud") || groups[b].length - groups[a].length);
@@ -1741,7 +1811,7 @@ function App() {
     const till = (o) => o.till ? `til ${shortDate(isoDate(new Date(o.till)))}` : "";
     return html`<div>
       <div className="card stack">
-        <div className="small muted">Skriv det, du mangler. Appen finder ugens tilbud i dine butikker inden for 10 km af ${shop.place}.</div>
+        <div className="small muted">Skriv det, du mangler, så finder appen ugens tilbud i dine butikker.</div>
         <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); add(shopDraft); }}>
           <input className="input" style=${{flex:1}} value=${shopDraft} onChange=${e=>setShopDraft(e.target.value)} placeholder="Fx kaffe, kylling, pasta" aria-label="Vare" />
           <button className="btn primary" type="submit" disabled=${!shopDraft.trim()}>Tilføj</button>
@@ -1750,14 +1820,7 @@ function App() {
       </div>
 
       <div className="section">
-        <div className="section-head"><h2>Butikker</h2><button className="link-btn" onClick=${useLocation}>Brug min placering</button></div>
-        <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${CHAINS.map(c => html`<button key=${c} className=${"chip " + (stores.includes(c) ? "info" : "")} style=${stores.includes(c) ? {} : {border:"1px solid var(--border)"}} aria-pressed=${stores.includes(c)} onClick=${()=>toggleStore(c)}>${stores.includes(c) ? "✓ " : ""}${c}</button>`)}</div>
-        ${!shop.stores && detected.length > 0 && html`<div className="small faint" style=${{marginTop:6}}>Valgt ud fra hvor du har handlet de sidste 3 måneder.</div>`}
-        <${Msg} k="shop" />
-      </div>
-
-      <div className="section">
-        <div className="section-head"><h2>Indkøbsliste</h2>${shop.items.length > 0 && html`<button className="link-btn" onClick=${refreshAll}>Opdater tilbud</button>`}</div>
+        <div className="section-head"><h2>Varer</h2>${shop.items.length > 0 && html`<button className="link-btn" onClick=${refreshAll}>Opdater tilbud</button>`}</div>
         ${shop.items.length === 0 ? html`<div className="card empty">Listen er tom. Tilføj varer ovenfor.</div>` : html`
           ${total > 0 && html`<div className="tip" style=${{marginTop:0, marginBottom:10}}><div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div><div>Varer på tilbud i alt ca. <b>${kr(Math.round(total))}</b></div></div>`}
           <div className="stack-gap">${order.map(store => html`<div key=${store}>
@@ -1783,9 +1846,139 @@ function App() {
           </div>`)}</div>
           ${shop.items.some(i => i.done) && html`<button className="btn soft block" style=${{marginTop:12}} onClick=${()=>setItems(shop.items.filter(i => !i.done))}>Ryd købte varer</button>`}`}
       </div>
-      <div className="small faint" style=${{marginTop:16}}>Tilbud fra Tjek (eTilbudsavis). Priser og gyldighed kan afvige i butikken.</div>
+      ${StoresBlock()}
     </div>`;
   };
+
+  const favMeals = (shop.meals || []).filter(m => m.fav);
+
+  const makePlan = async () => {
+    if (!favMeals.length) { setFoodTab("meals"); return; }
+    setPlanBusy(true);
+    try {
+      const terms = [...new Set(favMeals.flatMap(m => m.ingredients))];
+      const lists = {};
+      for (let i = 0; i < terms.length; i += 6) {
+        const chunk = terms.slice(i, i + 6);
+        (await Promise.all(chunk.map(offersFor))).forEach((l, k) => { lists[chunk[k]] = l; });
+      }
+      const r = planMeals(favMeals, lists, shopStores, Math.max(1, +shop.days || 5));
+      const start = new Date();
+      setShop({...shop, plan: {
+        created: isoDate(start), stores: r.stores,
+        days: r.meals.map((x, i) => ({ day: WEEKDAYS[(start.getDay() + i) % 7], mealId: x.meal.id, name: x.meal.name, items: x.items })),
+      }});
+    } finally { setPlanBusy(false); }
+  };
+
+  const PlanTab = () => {
+    const plan = shop.plan;
+    const shopping = {};
+    if (plan) for (const d of plan.days) for (const it of d.items) {
+      const key = it.offer ? it.offer.store : "Normalpris";
+      (shopping[key] ||= {});
+      shopping[key][it.term] ||= it;
+    }
+    const total = plan ? Object.values(shopping).flatMap(g => Object.values(g)).reduce((s, it) => s + (it.offer?.price || 0), 0) : 0;
+    const addToList = () => {
+      const have = new Set(shop.items.map(i => i.name.toLowerCase()));
+      const add = Object.values(shopping).flatMap(g => Object.values(g)).filter(it => !have.has(it.term.toLowerCase()))
+        .map(it => ({ id: uid(), name: it.term, done: false, pick: it.offer?.id || null }));
+      setShop({...shop, items: [...shop.items, ...add]});
+      // Reuse the offers the plan already fetched, so the list doesn't search the same words again.
+      setOffers(m => ({...m, ...Object.fromEntries(add.filter(a => termOffers[a.name]).map(a => [a.id, { list: termOffers[a.name] }]))}));
+      flash("plan", add.length ? `${add.length} varer lagt på indkøbslisten.` : "Alle varerne står allerede på listen.");
+    };
+    return html`<div>
+      <div className="card stack">
+        <div className="small muted">Madplanen vælger blandt dine ${favMeals.length} yndlingsretter dem, hvor flest ingredienser er på tilbud, og finder de 1–2 butikker, det kan betale sig at gå i.</div>
+        <div style=${{display:"flex", alignItems:"center", gap:10}}>
+          <span className="small" style=${{flex:1}}>Antal aftener</span>
+          <button className="icon-btn" aria-label="Færre aftener" onClick=${()=>setShop({...shop, days: Math.max(1, (+shop.days || 5) - 1)})}>−</button>
+          <span className="num" style=${{minWidth:20, textAlign:"center", fontWeight:600}}>${shop.days || 5}</span>
+          <button className="icon-btn" aria-label="Flere aftener" onClick=${()=>setShop({...shop, days: Math.min(7, (+shop.days || 5) + 1)})}>+</button>
+        </div>
+        <button className="btn primary block" disabled=${planBusy} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : favMeals.length ? (plan ? "Lav ny madplan" : "Lav madplan") : "Vælg dine yndlingsretter først"}</button>
+      </div>
+
+      ${plan && html`<div>
+        <div className="tip" style=${{marginTop:12}}>
+          <div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="cart" /></div>
+          <div>${plan.stores.length ? html`Gå i <b>${plan.stores.join(" og ")}</b>. Tilbudsvarerne koster ca. <b>${kr(Math.round(total))}</b>` : "Ingen af dine butikker har tilbud på ingredienserne lige nu."}</div>
+        </div>
+        <div className="section">
+          <div className="section-head"><h2>Ugens madplan</h2><span className="small faint">lavet ${shortDate(plan.created)}</span></div>
+          <div className="list">${plan.days.map((d, i) => html`<div key=${i} className="row" style=${{alignItems:"flex-start"}}>
+            <div style=${{width:64, flexShrink:0, fontWeight:600, paddingTop:2}}>${d.day}</div>
+            <div className="main">
+              <div className="title" style=${{whiteSpace:"normal"}}>${d.name}</div>
+              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${d.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term}${it.offer ? ` · ${kr(it.offer.price)}` : ""}</span>`)}</div>
+            </div>
+          </div>`)}</div>
+        </div>
+        <div className="section">
+          <div className="section-head"><h2>Det skal du købe</h2></div>
+          <div className="stack-gap">${Object.entries(shopping).sort(([a], [b]) => (a === "Normalpris") - (b === "Normalpris")).map(([store, items]) => html`<div key=${store}>
+            <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store === "Normalpris" ? `Normalpris – køb i ${plan.stores[0] || "din butik"}` : store}</div>
+            <div className="list">${Object.values(items).map(it => html`<div key=${it.term} className="row" style=${{minHeight:48}}>
+              ${it.offer?.image ? html`<img src=${it.offer.image} alt="" loading="lazy" style=${{width:36, height:36, objectFit:"contain", borderRadius:6, background:"#fff"}} />` : null}
+              <div className="main"><div className="title">${it.term}</div>${it.offer && html`<div className="sub">${it.offer.heading}</div>`}</div>
+              <div className="end num">${it.offer ? kr(it.offer.price) : ""}</div>
+            </div>`)}</div>
+          </div>`)}</div>
+          <button className="btn soft block" style=${{marginTop:12}} onClick=${addToList}><${Icon} name="plus" /> Læg det hele på indkøbslisten</button>
+          <${Msg} k="plan" />
+        </div>
+      </div>`}
+      ${StoresBlock()}
+    </div>`;
+  };
+
+  const MealsTab = () => {
+    const meals = shop.meals || [];
+    const setMeals = (m) => setShop({...shop, meals: m});
+    const fromTemplate = (name, ingredients) => {
+      const ex = meals.find(m => m.name === name);
+      setMeals(ex ? meals.map(m => m.id === ex.id ? {...m, fav: !m.fav} : m) : [...meals, { id: uid(), name, ingredients, fav: true }]);
+    };
+    const parse = (txt) => txt.split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
+    const addOwn = () => {
+      const name = mealDraft.name.trim(), ingredients = parse(mealDraft.ingredients);
+      if (!name || !ingredients.length) return;
+      setMeals([...meals, { id: uid(), name, ingredients, fav: true }]); setMealDraft({ name: "", ingredients: "" });
+    };
+    const isFav = (name) => meals.some(m => m.name === name && m.fav);
+    const own = meals.filter(m => !MEAL_TEMPLATES.some(([n]) => n === m.name));
+    return html`<div>
+      <div className="small muted" style=${{margin:"0 2px 10px"}}>Tryk på de retter, du kan lide. Du kan rette ingredienserne – de bruges til at finde tilbud.</div>
+      <div className="list">${[...MEAL_TEMPLATES.map(([name, ing]) => meals.find(m => m.name === name) || { id: name, name, ingredients: ing, fav: false, template: true }), ...own].map(m => html`<div key=${m.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap"}}>
+        <button className=${"icon-btn" + (m.fav ? " on" : "")} style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name} er ${m.fav ? "" : "ikke "}en yndlingsret`}
+          onClick=${()=> m.template || MEAL_TEMPLATES.some(([n]) => n === m.name) ? fromTemplate(m.name, m.ingredients) : setMeals(meals.map(x => x.id === m.id ? {...x, fav: !x.fav} : x))}>${m.fav ? "♥" : "♡"}</button>
+        <div className="main">
+          <div className="title">${m.name}</div>
+          ${m.fav && !m.template
+            ? html`<input className="input sm" style=${{marginTop:6}} value=${m.ingredients.join(", ")} aria-label=${`Ingredienser i ${m.name}`} onChange=${e=>setMeals(meals.map(x => x.id === m.id ? {...x, ingredients: parse(e.target.value)} : x))} />`
+            : html`<div className="sub" style=${{whiteSpace:"normal"}}>${m.ingredients.join(", ")}</div>`}
+        </div>
+        ${!MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setMeals(meals.filter(x => x.id !== m.id)); showUndo(`${m.name} er slettet`, () => setMeals(prev)); }}>Slet</button>`}
+      </div>`)}</div>
+      <div className="section">
+        <div className="section-head"><h2>Tilføj din egen ret</h2></div>
+        <div className="card stack">
+          <input className="input" placeholder="Navn, fx Mormors boller i karry" value=${mealDraft.name} onChange=${e=>setMealDraft({...mealDraft, name: e.target.value})} aria-label="Rettens navn" />
+          <input className="input" placeholder="Ingredienser adskilt af komma, fx hakket svinekød, ris, karry" value=${mealDraft.ingredients} onChange=${e=>setMealDraft({...mealDraft, ingredients: e.target.value})} aria-label="Ingredienser" />
+          <button className="btn primary" disabled=${!mealDraft.name.trim() || !parse(mealDraft.ingredients).length} onClick=${addOwn}>Tilføj ret</button>
+        </div>
+      </div>
+    </div>`;
+  };
+
+  const FoodPage = () => html`<div>
+    <div className="seg" role="tablist">${[["plan", "Madplan"], ["list", `Indkøbsliste${shop.items.filter(i => !i.done).length ? ` (${shop.items.filter(i => !i.done).length})` : ""}`], ["meals", `Retter${favMeals.length ? ` (${favMeals.length})` : ""}`]].map(([id, label]) =>
+      html`<button key=${id} role="tab" aria-selected=${foodTab === id} className=${foodTab === id ? "on" : ""} onClick=${()=>setFoodTab(id)}>${label}</button>`)}</div>
+    ${foodTab === "plan" ? PlanTab() : foodTab === "list" ? ShopPage() : MealsTab()}
+    <div className="small faint" style=${{marginTop:16}}>Tilbud fra Tjek (eTilbudsavis). Priser og gyldighed kan afvige i butikken.</div>
+  </div>`;
 
   const ConnectionsPage = () => {
     const bridgeOk = Boolean(bridge.url && bridge.secret);
@@ -1945,7 +2138,7 @@ function App() {
 
   const MorePage = () => {
     if (sub) {
-      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, shop: ShopPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
+      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
       return Sub ? Sub() : null;
     }
     const lastBackup = +store.get(BACKUP_KEY) || 0;
@@ -1971,11 +2164,12 @@ function App() {
   const pageTitle = page === "home" ? "Overblik"
     : page === "more" && sub ? MORE_PAGES.find(p => p.id === sub)?.label
     : page === "invest" ? "Investeringer"
+    : page === "food" ? "Mad og tilbud"
     : page === "budget" ? monthName(budgetMonthSel)
     : PAGES.find(p => p.id === page)?.label;
   const lastSync = [sync.bank, sync.saxo].filter(Boolean).sort().pop();
   const canSync = Boolean(ebSession?.session_id) || Boolean(saxoTokens);
-  const body = { home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, more: MorePage }[page]();
+  const body = { home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, food: FoodPage, more: MorePage }[page]();
 
   return html`<div className=${"app" + (hideAmounts ? " privacy" : "")}>
     <input ref=${importRef} type="file" accept=".json,application/json" style=${{display:"none"}} onChange=${e=>{ e.target.files[0]&&importData(e.target.files[0]); e.target.value=""; }} />
