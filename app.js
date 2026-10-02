@@ -228,14 +228,23 @@ const subKey = (d) => (d || "").toLowerCase()
   .replace(/\b(dankort|visa|mastercard|mc|nota|kortkøb|købt|betalingsservice|pbs|overførsel|dk|www|com|aps|as)\b/g, " ")
   .replace(/\s+/g, " ").trim().split(" ").slice(0, 3).join(" ");
 
-// Recurring charges in the last six months: about one charge a month at a stable amount, still active.
-function detectSubscriptions(transactions, hidden = []) {
+// Readable merchant name from a bank text: drops MobilePay prefixes, addresses, note numbers and city suffixes.
+function prettyName(desc) {
+  let n = (desc || "").replace(/^(mob\.?\s*pay\*|mobilepay:?\s*(mobilepay\s*)?|dankort-nota\s+|pbs\s+)/i, "");
+  n = n.split(/\\|,|\s+Notanr\b|\s+beløb omregnet/i)[0].trim() || desc || "";
+  if (n === n.toUpperCase()) n = n.toLowerCase().replace(/(^|[\s*\-])\p{L}/gu, (m) => m.toUpperCase());
+  return n;
+}
+
+// Recurring payments in the last six months: about once a month at a stable amount, still active.
+// sign -1 finds charges (subscriptions), +1 finds money coming in (people paying their share).
+function detectRecurring(transactions, sign, hidden = []) {
   const today = isoDate(new Date());
   const since = addDays(today, -190), stale = addDays(today, -45);
   const groups = {};
   for (const t of transactions) {
-    if (!t.date || t.date < since || !(t.amount < 0) || t.trip || t.description === RENT_TEXT) continue;
-    if (INCOME_CATS.includes(t.category) || EXCLUDED.includes(t.category) || ["Husleje", "Opsparing", "Investering"].includes(t.category)) continue;
+    if (!t.date || t.date < since || !(t.amount * sign > 0) || t.trip || t.description === RENT_TEXT) continue;
+    if (EXCLUDED.includes(t.category) || ["Løn", "SU", "Husleje", "Opsparing", "Investering"].includes(t.category)) continue;
     const k = subKey(t.description);
     if (k.length < 3) continue;
     (groups[k] ||= []).push(t);
@@ -245,16 +254,25 @@ function detectSubscriptions(transactions, hidden = []) {
     if (hidden.includes(key)) continue;
     txs.sort((a, b) => a.date.localeCompare(b.date));
     const months = new Set(txs.map(t => t.date.slice(0, 7)));
-    const known = txs.some(t => t.category === "Abonnementer");
+    const known = sign < 0 && txs.some(t => t.category === "Abonnementer");
     if (months.size < (known ? 2 : 3) || txs.length > months.size * 1.5) continue;
-    const amounts = txs.map(t => -t.amount).sort((a, b) => a - b);
+    const amounts = txs.map(t => Math.abs(t.amount)).sort((a, b) => a - b);
     const median = amounts[Math.floor(amounts.length / 2)];
     if (median < 10 || (amounts[amounts.length - 1] - amounts[0]) / median > 0.35) continue;
     const last = txs[txs.length - 1];
     if (last.date < stale) continue;
-    out.push({ key, name: last.description, category: last.category, monthly: -last.amount, last: last.date, months: months.size });
+    out.push({ key, name: prettyName(last.description), raw: last.description, category: last.category, monthly: Math.abs(last.amount), last: last.date, months: months.size });
   }
   return out.sort((a, b) => b.monthly - a.monthly);
+}
+const detectSubscriptions = (transactions, hidden) => detectRecurring(transactions, -1, hidden);
+
+// Guess which recurring payment-in covers part of a subscription: a word from the payer's text appears in
+// the merchant's text ("Fitness X - Chrisser" ↔ "FitnessX A/S"). Anything looser is left to the user.
+function guessShare(sub, incoming) {
+  const target = (sub.raw || "").toLowerCase().replace(/[^a-zæøå]+/g, "");
+  const generic = ["mobilepay", "mobpay", "betaling", "overfoersel", "indbetaling", "fra", "til"];
+  return incoming.find(i => i.key.split(" ").some(w => w.length >= 4 && !generic.includes(w) && target.includes(w))) || null;
 }
 
 // Holding type for the allocation bar: Saxo tells us; for manual holdings guess from the name.
@@ -280,6 +298,7 @@ function normalizeData(d) {
   if (typeof d.cash === "number") out.cash = d.cash;
   if (d.rejse) out.rejse = {...DEFAULT_REJSE, ...d.rejse};
   if (Array.isArray(d.subsHidden)) out.subsHidden = d.subsHidden;
+  if (d.subsShare && typeof d.subsShare === "object") out.subsShare = d.subsShare;
   if (Array.isArray(d.invHistory)) out.invHistory = d.invHistory;
   if (d.sync) out.sync = d.sync;
   if (Array.isArray(d.history)) out.history = d.history;
@@ -537,6 +556,7 @@ function App() {
   const [history, setHistory] = useState(init.history || []);
   const [rent, setRent] = useState(init.rent || DEFAULT_RENT);
   const [subsHidden, setSubsHidden] = useState(init.subsHidden || []);
+  const [subsShare, setSubsShare] = useState(init.subsShare || {});
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saveError, setSaveError] = useState(false);
 
@@ -606,14 +626,15 @@ function App() {
     if (d.history) setHistory(d.history);
     if (d.rent) setRent(d.rent);
     if (d.subsHidden) setSubsHidden(d.subsHidden);
+    if (d.subsShare) setSubsShare(d.subsShare);
     if (d.invHistory) setInvHistory(d.invHistory);
   };
   const loadData = () => applyData(readStored());
 
   useEffect(() => {
-    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,invHistory}));
+    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory}));
     setSaveError(!ok);
-  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, invHistory]);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, invHistory]);
 
   useEffect(() => { navigator.storage?.persist?.().catch(()=>{}); }, []);
   useEffect(() => {
@@ -671,8 +692,16 @@ function App() {
     });
   }, [invValue, invCost]);
 
-  const subscriptions = detectSubscriptions(transactions, subsHidden);
-  const subsMonthly = subscriptions.reduce((s, x) => s + x.monthly, 0);
+  const recurringIn = detectRecurring(transactions, 1);
+  const subscriptionsRaw = detectSubscriptions(transactions, subsHidden);
+  // subsShare[subKey] is the key of the payment-in that covers part of it, or "none"; unset means guess.
+  const subscriptions = subscriptionsRaw.map(x => {
+    const pick = subsShare[x.key];
+    const share = pick === "none" ? null : pick ? recurringIn.find(i => i.key === pick) || null : guessShare(x, recurringIn);
+    const back = share ? Math.min(share.monthly, x.monthly) : 0;
+    return { ...x, share, net: x.monthly - back };
+  });
+  const subsMonthly = subscriptions.reduce((s, x) => s + x.net, 0);
 
   // Travel fund: the user and the sister each earmark `rejse.goal` (the user's part sits in savings).
   // A trip costs what both laid out; each pays half, so the one who paid more is owed the difference.
@@ -1096,7 +1125,7 @@ function App() {
   // ---------- backup ----------
 
   const exportData = () => {
-    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,invHistory,exported:new Date().toISOString()};
+    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,exported:new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1601,23 +1630,34 @@ function App() {
     </div>`;
   };
 
-  const SubsPage = () => html`<div>
+  const SubsPage = () => {
+    const gross = subscriptions.reduce((s, x) => s + x.monthly, 0);
+    return html`<div>
     <div className="hero">
-      <div className="label">Faste træk og abonnementer</div>
+      <div className="label">Faste træk – din egen del</div>
       <div className="big"><${CountUp} value=${Math.round(subsMonthly)} /></div>
-      <div className="hm">om måneden · ${fmt(subsMonthly * 12)} om året · ${subscriptions.length} stk.</div>
+      <div className="hm">om måneden · ${fmt(subsMonthly * 12)} om året · ${subscriptions.length} stk.${gross > subsMonthly ? ` · ${fmt(gross)} før andres andel` : ""}</div>
     </div>
-    <div className="small muted" style=${{margin:"12px 2px"}}>Fundet ud fra poster, der kommer ca. én gang om måneden med næsten samme beløb. Husleje, opsparing og rejser er ikke med.</div>
+    <div className="small muted" style=${{margin:"12px 2px"}}>Fundet ud fra poster, der kommer ca. én gang om måneden med næsten samme beløb. Får du fast penge tilbage fra andre, trækkes de fra. Husleje, opsparing og rejser er ikke med.</div>
     ${subscriptions.length === 0
       ? html`<div className="card empty">Ingen faste træk fundet endnu. Der skal være poster fra mindst 2–3 måneder.</div>`
-      : html`<div className="list stagger">${subscriptions.map((x, i) => html`<div key=${x.key} className="row" style=${stag(i)}>
+      : html`<div className="list stagger">${subscriptions.map((x, i) => html`<div key=${x.key} className="row" style=${{...stag(i), alignItems:"flex-start", flexWrap:"wrap"}}>
           <${CatIcon} cat=${x.category} />
-          <div className="main"><div className="title">${x.name}</div><div className="sub">${fmt(x.monthly * 12)} om året · sidst ${shortDate(x.last)} · ${x.months} mdr.</div></div>
-          <div className="end"><div className="num">${fmt(x.monthly)}</div>
+          <div className="main">
+            <div className="title">${x.name}</div>
+            <div className="sub">${x.share ? `${fmt(x.monthly)} − ${fmt(Math.min(x.share.monthly, x.monthly))} fra ${x.share.name}` : `${fmt(x.monthly * 12)} om året`} · sidst ${shortDate(x.last)}</div>
+            ${recurringIn.length > 0 && html`<select className="input sm" style=${{marginTop:6, maxWidth:"100%"}} aria-label=${`Andre betaler med på ${x.name}`} value=${x.share?.key || "none"}
+              onChange=${e=>setSubsShare({...subsShare, [x.key]: e.target.value})}>
+              <option value="none">Ingen betaler med</option>
+              ${recurringIn.map(r => html`<option key=${r.key} value=${r.key}>${r.name} betaler ${fmt(r.monthly)}/md</option>`)}
+            </select>`}
+          </div>
+          <div className="end"><div className="num">${fmt(x.net)}</div>
             <button className="link-btn small" onClick=${()=>{ const prev = subsHidden; setSubsHidden([...subsHidden, x.key]); showUndo(`${x.name} er skjult`, () => setSubsHidden(prev)); }}>Ikke et abonnement</button></div>
         </div>`)}</div>`}
     ${subsHidden.length > 0 && html`<button className="btn soft block" style=${{marginTop:12}} onClick=${()=>setSubsHidden([])}>Vis ${subsHidden.length} skjulte igen</button>`}
   </div>`;
+  };
 
   const ConnectionsPage = () => {
     const bridgeOk = Boolean(bridge.url && bridge.secret);
