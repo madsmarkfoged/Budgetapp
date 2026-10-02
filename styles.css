@@ -303,3 +303,8 @@ select.input { appearance: auto; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* privacy mode: amounts are masked in text; editable number fields are blurred until focused */
+.privacy input[type="number"] { filter: blur(6px); }
+.privacy input[type="number"]:focus { filter: none; }
+.privacy-btn[aria-pressed="true"] { color: var(--accent); }

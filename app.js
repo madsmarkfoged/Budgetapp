@@ -24,6 +24,7 @@ const EB_KEY = "eb_session";          // Enable Banking session (not part of bac
 const SAXO_KEY = "saxo_tokens";       // Saxo OAuth tokens (not part of backups)
 const OAUTH_KEY = "oauth_pending";    // {provider, nonce} while away at the bank/Saxo
 const THEME_KEY = "theme";
+const PRIVACY_KEY = "hide_amounts";
 const DEFAULT_MODEL = "claude-sonnet-5";
 const BACKUP_KEY = "last_backup";
 // Unattended bank fetches are capped by PSD2 (typically 4 per day), so auto-sync at most every 8 hours.
@@ -49,8 +50,11 @@ function budgetMonth(dateStr, amount, category) {
   return `${y}-${String(m+1).padStart(2,"0")}`;
 }
 
-const fmt = (n) => new Intl.NumberFormat("da-DK",{style:"currency",currency:"DKK",maximumFractionDigits:0}).format(n);
-const fmtShort = (n) => new Intl.NumberFormat("da-DK",{maximumFractionDigits:0}).format(n);
+// Privacy mode: set by App on every render; while on, amounts render as dots (for using the app in public).
+let HIDE_AMOUNTS = false;
+const fmtKr = (n) => new Intl.NumberFormat("da-DK",{style:"currency",currency:"DKK",maximumFractionDigits:0}).format(n);
+const fmt = (n) => HIDE_AMOUNTS ? "••• kr." : fmtKr(n);
+const fmtShort = (n) => HIDE_AMOUNTS ? "•••" : new Intl.NumberFormat("da-DK",{maximumFractionDigits:0}).format(n);
 const numf = (n) => new Intl.NumberFormat("da-DK",{maximumFractionDigits:2}).format(n);
 const pctf = (n) => new Intl.NumberFormat("da-DK",{maximumFractionDigits:1,signDisplay:"always"}).format(n) + " %";
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
@@ -275,6 +279,43 @@ function guessShare(sub, incoming) {
   return incoming.find(i => i.key.split(" ").some(w => w.length >= 4 && !generic.includes(w) && target.includes(w))) || null;
 }
 
+// ---------------- shopping list from weekly offers (Tjek / eTilbudsavis) ----------------
+// Tjek's public offer search allows calls from the app's origin and needs no key. It is not an
+// official, documented API, so everything here degrades to "no offers found" if it changes.
+const TJEK_SEARCH = "https://squid-api.tjek.com/v2/offers/search";
+const CHAINS = ["REMA 1000", "Netto", "Lidl", "Føtex", "Bilka", "Coop 365", "SuperBrugsen", "Kvickly", "Dagli'Brugsen", "Meny", "Spar", "Løvbjerg", "Min Købmand", "Lagkagehuset", "7-Eleven"];
+const AARHUS = { lat: 56.1572, lng: 10.2107, place: "Aarhus C" };
+const STAPLES = ["Mælk", "Æg", "Brød", "Kaffe", "Smør", "Ost", "Kylling", "Hakket oksekød", "Pasta", "Ris", "Bananer", "Yoghurt", "Toiletpapir"];
+const DEFAULT_SHOP = { items: [], stores: null, ...AARHUS };
+const kr = (n) => new Intl.NumberFormat("da-DK", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(n) + " kr.";
+const chainOf = (dealerName) => CHAINS.find(c => (dealerName || "").toLowerCase().startsWith(c.toLowerCase())) || dealerName;
+
+// The chains the user actually shops in, from card purchases in the last 90 days (2+ visits).
+function usualStores(transactions) {
+  const since = addDays(isoDate(new Date()), -90), n = {};
+  for (const t of transactions) {
+    if (!t.date || t.date < since || !(t.amount < 0)) continue;
+    const d = (t.description || "").toLowerCase();
+    const c = CHAINS.find(c => d.includes(c.toLowerCase().replace(/\s+/g, " ")) || d.includes(c.toLowerCase().replace(/\s+/g, "")));
+    if (c) n[c] = (n[c] || 0) + 1;
+  }
+  return Object.entries(n).filter(([, k]) => k >= 2).sort((a, b) => b[1] - a[1]).map(([c]) => c);
+}
+
+async function searchOffers(query, { lat, lng }) {
+  const q = new URLSearchParams({ query, r_lat: lat, r_lng: lng, r_radius: 10000, limit: 40 });
+  const res = await fetch(`${TJEK_SEARCH}?${q}`);
+  if (!res.ok) throw new Error(`Tilbud kunne ikke hentes (${res.status}).`);
+  const now = Date.now();
+  return (await res.json())
+    .filter(o => o.pricing?.price != null && (!o.run_till || Date.parse(o.run_till) >= now))
+    .map(o => ({
+      id: o.id, heading: o.heading, description: o.description || "", price: +o.pricing.price, before: o.pricing.pre_price,
+      store: chainOf(o.dealer?.name), from: o.run_from, till: o.run_till, image: o.images?.thumb || null,
+    }));
+  // Kept in Tjek's order (best match first): the cheapest hit for "kaffe" is often capsules, not coffee.
+}
+
 // Holding type for the allocation bar: Saxo tells us; for manual holdings guess from the name.
 const TYPE_LABEL = { Etf: "ETF", Stock: "Aktier", MutualFund: "Fonde", Bond: "Obligationer" };
 const TYPE_COLOR = { ETF: "#8B7BFF", Aktier: "#4FC3F7", Fonde: "#F2B35B", Obligationer: "#F48FB1", Andet: "#90A4AE", Kontant: "#9CF0C8" };
@@ -299,6 +340,7 @@ function normalizeData(d) {
   if (d.rejse) out.rejse = {...DEFAULT_REJSE, ...d.rejse};
   if (Array.isArray(d.subsHidden)) out.subsHidden = d.subsHidden;
   if (d.subsShare && typeof d.subsShare === "object") out.subsShare = d.subsShare;
+  if (d.shop) out.shop = {...DEFAULT_SHOP, ...d.shop};
   if (Array.isArray(d.invHistory)) out.invHistory = d.invHistory;
   if (d.sync) out.sync = d.sync;
   if (Array.isArray(d.history)) out.history = d.history;
@@ -315,6 +357,7 @@ function readStored() {
 // ---------------- icons ----------------
 
 const ICONS = {
+  eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   home: "M3 11l9-7 9 7M5 10v10h14V10",
   list: "M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01",
   donut: "M12 3a9 9 0 1 0 9 9h-5a4 4 0 1 1-4-4zM15 3.5A9 9 0 0 1 20.5 9H15z",
@@ -527,6 +570,7 @@ const MORE_PAGES = [
   { id: "wealth", label: "Formue og gæld", icon: "wallet", sub: "Konti og gæld" },
   { id: "trips", label: "Rejsepulje", icon: "plane", sub: "Ferieopsparing og rejser med søs" },
   { id: "subs", label: "Abonnementer", icon: "repeat", sub: "Faste træk hver måned" },
+  { id: "shop", label: "Tilbud og indkøb", icon: "cart", sub: "Indkøbsliste ud fra ugens tilbud" },
   { id: "connections", label: "Bankforbindelser", icon: "bank", sub: "Sparekassen Kronjylland og Saxo" },
   { id: "ai", label: "AI-analyse", icon: "spark", sub: "Råd baseret på dine tal" },
   { id: "import", label: "Import og værktøjer", icon: "upload", sub: "CSV, fast husleje, kategorier" },
@@ -557,6 +601,9 @@ function App() {
   const [rent, setRent] = useState(init.rent || DEFAULT_RENT);
   const [subsHidden, setSubsHidden] = useState(init.subsHidden || []);
   const [subsShare, setSubsShare] = useState(init.subsShare || {});
+  const [shop, setShop] = useState(init.shop || DEFAULT_SHOP);
+  const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
+  const [shopDraft, setShopDraft] = useState("");
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saveError, setSaveError] = useState(false);
 
@@ -583,6 +630,9 @@ function App() {
 
   // settings
   const [theme, setThemeState] = useState(store.get(THEME_KEY) || "dark");
+  const [hideAmounts, setHideAmounts] = useState(store.get(PRIVACY_KEY) === "1");
+  HIDE_AMOUNTS = hideAmounts;
+  const toggleHide = () => { const v = !hideAmounts; setHideAmounts(v); if (v) store.set(PRIVACY_KEY, "1"); else store.remove(PRIVACY_KEY); };
   const [apiKey, setApiKey] = useState(store.get(API_KEY_KEY) || "");
   const [keyDraft, setKeyDraft] = useState("");
   const [model, setModel] = useState(store.get(MODEL_KEY) || DEFAULT_MODEL);
@@ -627,14 +677,15 @@ function App() {
     if (d.rent) setRent(d.rent);
     if (d.subsHidden) setSubsHidden(d.subsHidden);
     if (d.subsShare) setSubsShare(d.subsShare);
+    if (d.shop) setShop(d.shop);
     if (d.invHistory) setInvHistory(d.invHistory);
   };
   const loadData = () => applyData(readStored());
 
   useEffect(() => {
-    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory}));
+    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop}));
     setSaveError(!ok);
-  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, invHistory]);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, invHistory, shop]);
 
   useEffect(() => { navigator.storage?.persist?.().catch(()=>{}); }, []);
   useEffect(() => {
@@ -695,6 +746,16 @@ function App() {
   const recurringIn = detectRecurring(transactions, 1);
   const subscriptionsRaw = detectSubscriptions(transactions, subsHidden);
   // subsShare[subKey] is the key of the payment-in that covers part of it, or "none"; unset means guess.
+  const loadOffers = async (item) => {
+    setOffers(m => ({...m, [item.id]: {loading: true}}));
+    try { const list = await searchOffers(item.name, shop); setOffers(m => ({...m, [item.id]: {list}})); }
+    catch (e) { setOffers(m => ({...m, [item.id]: {error: e.message || "Tilbud kunne ikke hentes."}})); }
+  };
+  // Offers aren't stored; fetch them for the open list whenever the shopping page is shown.
+  useEffect(() => {
+    if (page === "more" && sub === "shop") shop.items.filter(i => !i.done && !offers[i.id]).forEach(loadOffers);
+  }, [page, sub, shop.lat, shop.lng]);
+
   const subscriptions = subscriptionsRaw.map(x => {
     const pick = subsShare[x.key];
     const share = pick === "none" ? null : pick ? recurringIn.find(i => i.key === pick) || null : guessShare(x, recurringIn);
@@ -1125,7 +1186,7 @@ function App() {
   // ---------- backup ----------
 
   const exportData = () => {
-    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,exported:new Date().toISOString()};
+    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop,exported:new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1544,11 +1605,11 @@ function App() {
       showUndo(`${tr.name} er slettet`, () => { setRejse(prevR); setTransactions(prevT); });
     };
     const request = async (tr, s) => {
-      // fmt() already ends in "kr.", which doubles as the full stop.
-      const text = `Hej søs! ${tr.name} kostede i alt ${fmt(s.total)}`
-        + ` Jeg lagde ${fmt(s.mine)} ud${s.hers > 0 ? `, og du lagde ${fmt(s.hers)} ud` : ""}, så vi skal hver betale ${fmt(s.half)}`
-        + (s.repaid > 0 ? ` Du har allerede betalt ${fmt(s.repaid)}` : "")
-        + ` Så mangler du at betale mig ${fmt(s.owed)} Kan du MobilePay mig?`;
+      // fmtKr() already ends in "kr.", which doubles as the full stop.
+      const text = `Hej søs! ${tr.name} kostede i alt ${fmtKr(s.total)}`
+        + ` Jeg lagde ${fmtKr(s.mine)} ud${s.hers > 0 ? `, og du lagde ${fmtKr(s.hers)} ud` : ""}, så vi skal hver betale ${fmtKr(s.half)}`
+        + (s.repaid > 0 ? ` Du har allerede betalt ${fmtKr(s.repaid)}` : "")
+        + ` Så mangler du at betale mig ${fmtKr(s.owed)} Kan du MobilePay mig?`;
       try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e?.name === "AbortError") return; }
       navigator.clipboard?.writeText(text).then(() => flash("trip-" + tr.id, "Beskeden er kopieret. Sæt den ind i en besked til søs."), () => {});
     };
@@ -1657,6 +1718,78 @@ function App() {
         </div>`)}</div>`}
     ${subsHidden.length > 0 && html`<button className="btn soft block" style=${{marginTop:12}} onClick=${()=>setSubsHidden([])}>Vis ${subsHidden.length} skjulte igen</button>`}
   </div>`;
+  };
+
+  const ShopPage = () => {
+    const detected = usualStores(transactions);
+    const stores = shop.stores || (detected.length ? detected : ["REMA 1000", "Netto", "Lidl"]);
+    const setItems = (items) => setShop({...shop, items});
+    const inStores = (list) => (list || []).filter(o => stores.includes(o.store));
+    const load = loadOffers;
+    const add = (name) => {
+      const n = name.trim();
+      if (!n || shop.items.some(i => i.name.toLowerCase() === n.toLowerCase())) return;
+      const item = { id: uid(), name: n, done: false, pick: null };
+      setItems([...shop.items, item]); setShopDraft(""); load(item);
+    };
+    const refreshAll = () => shop.items.filter(i => !i.done).forEach(load);
+    const toggleStore = (c) => { const cur = stores; setShop({...shop, stores: cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c]}); };
+    const useLocation = () => navigator.geolocation?.getCurrentPosition(
+      (p) => { const lat = Math.round(p.coords.latitude * 100) / 100, lng = Math.round(p.coords.longitude * 100) / 100; setShop({...shop, lat, lng, place: "din placering"}); setOffers({}); flash("shop", "Placering opdateret. Tryk Opdater tilbud."); },
+      () => flash("shop", "Placeringen blev ikke delt. Bruger Aarhus C."));
+    // Each item's chosen offer: the one the user tapped, else the cheapest in their stores.
+    const chosen = (item) => { const l = inStores(offers[item.id]?.list); return l.find(o => o.id === item.pick) || l[0] || null; };
+    const groups = {};
+    for (const it of shop.items) { const o = chosen(it); const k = o ? o.store : "Uden tilbud"; (groups[k] ||= []).push({ it, o }); }
+    const order = Object.keys(groups).sort((a, b) => (a === "Uden tilbud") - (b === "Uden tilbud") || groups[b].length - groups[a].length);
+    const total = shop.items.filter(i => !i.done).reduce((s, i) => s + (chosen(i)?.price || 0), 0);
+    const till = (o) => o.till ? `til ${shortDate(isoDate(new Date(o.till)))}` : "";
+    return html`<div>
+      <div className="card stack">
+        <div className="small muted">Skriv det, du mangler. Appen finder ugens tilbud i dine butikker inden for 10 km af ${shop.place}.</div>
+        <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); add(shopDraft); }}>
+          <input className="input" style=${{flex:1}} value=${shopDraft} onChange=${e=>setShopDraft(e.target.value)} placeholder="Fx kaffe, kylling, pasta" aria-label="Vare" />
+          <button className="btn primary" type="submit" disabled=${!shopDraft.trim()}>Tilføj</button>
+        </form>
+        <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${STAPLES.filter(x => !shop.items.some(i => i.name.toLowerCase() === x.toLowerCase())).map(x => html`<button key=${x} className="chip info" onClick=${()=>add(x)}>+ ${x}</button>`)}</div>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Butikker</h2><button className="link-btn" onClick=${useLocation}>Brug min placering</button></div>
+        <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${CHAINS.map(c => html`<button key=${c} className=${"chip " + (stores.includes(c) ? "info" : "")} style=${stores.includes(c) ? {} : {border:"1px solid var(--border)"}} aria-pressed=${stores.includes(c)} onClick=${()=>toggleStore(c)}>${stores.includes(c) ? "✓ " : ""}${c}</button>`)}</div>
+        ${!shop.stores && detected.length > 0 && html`<div className="small faint" style=${{marginTop:6}}>Valgt ud fra hvor du har handlet de sidste 3 måneder.</div>`}
+        <${Msg} k="shop" />
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Indkøbsliste</h2>${shop.items.length > 0 && html`<button className="link-btn" onClick=${refreshAll}>Opdater tilbud</button>`}</div>
+        ${shop.items.length === 0 ? html`<div className="card empty">Listen er tom. Tilføj varer ovenfor.</div>` : html`
+          ${total > 0 && html`<div className="tip" style=${{marginTop:0, marginBottom:10}}><div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div><div>Varer på tilbud i alt ca. <b>${kr(Math.round(total))}</b></div></div>`}
+          <div className="stack-gap">${order.map(store => html`<div key=${store}>
+            <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store}</div>
+            <div className="list">${groups[store].map(({ it, o }) => {
+              const st = offers[it.id] || {}, alts = inStores(st.list).slice(0, 6);
+              return html`<div key=${it.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: it.done ? .5 : 1}}>
+                <input type="checkbox" style=${{width:20, height:20, marginTop:4, accentColor:"var(--accent)"}} checked=${it.done} aria-label=${`${it.name} er købt`} onChange=${()=>setItems(shop.items.map(x => x.id === it.id ? {...x, done: !x.done} : x))} />
+                ${o?.image ? html`<img src=${o.image} alt="" loading="lazy" style=${{width:44, height:44, objectFit:"contain", borderRadius:8, background:"#fff"}} />` : null}
+                <div className="main">
+                  <div className="title" style=${{textDecoration: it.done ? "line-through" : "none"}}>${it.name}</div>
+                  <div className="sub" style=${{whiteSpace:"normal"}}>${st.loading ? "Finder tilbud…" : st.error ? st.error : o ? `${o.heading} · ${till(o)}` : st.list ? "Ingen tilbud i dine butikker lige nu" : "Tryk Opdater tilbud"}</div>
+                  ${alts.length > 1 && html`<select className="input sm" style=${{marginTop:6, maxWidth:"100%"}} aria-label=${`Vælg tilbud for ${it.name}`} value=${o?.id || ""} onChange=${e=>setItems(shop.items.map(x => x.id === it.id ? {...x, pick: e.target.value} : x))}>
+                    ${alts.map(a => html`<option key=${a.id} value=${a.id}>${a.store}: ${kr(a.price)} – ${a.heading.slice(0, 40)}</option>`)}
+                  </select>`}
+                </div>
+                <div className="end">
+                  ${o && html`<div className="num" style=${{fontWeight:600}}>${kr(o.price)}</div>${o.before ? html`<div className="small faint" style=${{textDecoration:"line-through"}}>${kr(o.before)}</div>` : null}`}
+                  <button className="link-btn small" aria-label=${`Fjern ${it.name}`} onClick=${()=>{ const prev = shop.items; setItems(shop.items.filter(x => x.id !== it.id)); showUndo(`${it.name} er fjernet`, () => setItems(prev)); }}>Fjern</button>
+                </div>
+              </div>`;
+            })}</div>
+          </div>`)}</div>
+          ${shop.items.some(i => i.done) && html`<button className="btn soft block" style=${{marginTop:12}} onClick=${()=>setItems(shop.items.filter(i => !i.done))}>Ryd købte varer</button>`}`}
+      </div>
+      <div className="small faint" style=${{marginTop:16}}>Tilbud fra Tjek (eTilbudsavis). Priser og gyldighed kan afvige i butikken.</div>
+    </div>`;
   };
 
   const ConnectionsPage = () => {
@@ -1817,7 +1950,7 @@ function App() {
 
   const MorePage = () => {
     if (sub) {
-      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
+      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, shop: ShopPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
       return Sub ? Sub() : null;
     }
     const lastBackup = +store.get(BACKUP_KEY) || 0;
@@ -1849,11 +1982,12 @@ function App() {
   const canSync = Boolean(ebSession?.session_id) || Boolean(saxoTokens);
   const body = { home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, more: MorePage }[page]();
 
-  return html`<div className="app">
+  return html`<div className=${"app" + (hideAmounts ? " privacy" : "")}>
     <input ref=${importRef} type="file" accept=".json,application/json" style=${{display:"none"}} onChange=${e=>{ e.target.files[0]&&importData(e.target.files[0]); e.target.value=""; }} />
     <header className="topbar">
       ${page === "more" && sub && html`<button className="icon-btn" aria-label="Tilbage" onClick=${()=>setSub(null)}><${Icon} name="back" /></button>`}
       <h1>${pageTitle}</h1>
+      <button className="icon-btn privacy-btn" aria-pressed=${hideAmounts} aria-label=${hideAmounts ? "Vis beløb" : "Skjul beløb"} title=${hideAmounts ? "Vis beløb" : "Skjul beløb"} onClick=${toggleHide}><${Icon} name=${hideAmounts ? "eyeoff" : "eye"} /></button>
       <button className=${"sync-chip" + (syncing ? " spin" : "")} disabled=${syncing} onClick=${()=> canSync ? syncAll() : goSub("connections")}
         aria-label=${canSync ? "Synkronisér" : "Forbind bank og Saxo"}>
         <${Icon} name="refresh" />${syncing ? "Henter…" : lastSync ? syncTime(lastSync) : canSync ? "Synkronisér" : "Forbind"}
