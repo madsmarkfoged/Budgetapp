@@ -56,6 +56,12 @@ const pctf = (n) => new Intl.NumberFormat("da-DK",{maximumFractionDigits:1,signD
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const addDays = (iso, n) => { const d = parseDKDate(iso); d.setDate(d.getDate()+n); return isoDate(d); };
+const monthEnd = (ym) => { const [y,m] = ym.split("-").map(Number); return `${ym}-${String(new Date(y,m,0).getDate()).padStart(2,"0")}`; };
+const addMonths = (ym, n) => { const [y,m] = ym.split("-").map(Number); return isoDate(new Date(y, m-1+n, 1)).slice(0,7); };
+// Fixed rent is booked on the last day of the month; this is the newest month whose rent day has come.
+const lastRentMonth = () => { const t = isoDate(new Date()); const ym = t.slice(0,7); return monthEnd(ym) <= t ? ym : addMonths(ym, -1); };
+const RENT_TEXT = "Husleje (fast)";
+const DEFAULT_RENT = { amount: 4982, assetId: null, auto: true, paidThrough: null };
 const monthLabel = (ym) => { const [y,m] = ym.split("-"); return `${MONTHS_DA[+m-1]} ${y}`; };
 const monthName = (ym) => { const m = MONTHS_DA[+ym.split("-")[1]-1]; return m[0].toUpperCase() + m.slice(1); };
 // The running budget month flips to next month on payday itself.
@@ -238,6 +244,7 @@ function normalizeData(d) {
   if (d.rejse) out.rejse = d.rejse;
   if (d.sync) out.sync = d.sync;
   if (Array.isArray(d.history)) out.history = d.history;
+  if (d.rent) out.rent = {...DEFAULT_RENT, ...d.rent};
   return out;
 }
 
@@ -473,6 +480,7 @@ function App() {
   const [rejse, setRejse] = useState(init.rejse || {saved:0, goal:100000});
   const [sync, setSync] = useState(init.sync || {bank:null, saxo:null});
   const [history, setHistory] = useState(init.history || []);
+  const [rent, setRent] = useState(init.rent || DEFAULT_RENT);
   const [saveError, setSaveError] = useState(false);
 
   // ui state
@@ -484,7 +492,6 @@ function App() {
   const [budgetMonthSel, setBudgetMonthSel] = useState(currentBudgetMonth());
   const [editBudget, setEditBudget] = useState(false);
   const [nwRange, setNwRange] = useState("1M");
-  const [fixedRent, setFixedRent] = useState(4921);
   const [csvPaste, setCsvPaste] = useState("");
   const [msgs, setMsgs] = useState({});
   const [aiMsg, setAiMsg] = useState(""); const [aiLoading, setAiLoading] = useState(false);
@@ -538,13 +545,14 @@ function App() {
     if (d.rejse) setRejse(d.rejse);
     if (d.sync) setSync(d.sync);
     if (d.history) setHistory(d.history);
+    if (d.rent) setRent(d.rent);
   };
   const loadData = () => applyData(readStored());
 
   useEffect(() => {
-    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history}));
+    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent}));
     setSaveError(!ok);
-  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history]);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent]);
 
   useEffect(() => { navigator.storage?.persist?.().catch(()=>{}); }, []);
   useEffect(() => {
@@ -687,19 +695,42 @@ function App() {
     flash("tools", n === 0 ? "Alt var allerede korrekt." : `${n} poster opdateret.`);
   };
 
+  const rentTx = (ym) => ({id:uid(),date:monthEnd(ym),description:RENT_TEXT,amount:-Math.abs(rent.amount||0),category:"Husleje",localDate:true});
+
+  // Back-fills rent for every month with postings, and brings existing rent postings up to the current amount.
   const genRent = () => {
     const mset = new Set(transactions.map(t=>t.date?.slice(0,7)).filter(Boolean));
-    mset.add(isoDate(new Date()).slice(0,7));
-    const additions = [];
-    [...mset].sort().forEach(ym=>{
-      const [y,m] = ym.split("-").map(Number);
-      const lastDay = new Date(y,m,0).getDate();
-      const date = `${ym}-${String(lastDay).padStart(2,"0")}`;
-      if (!transactions.some(t=>t.date===date && t.description==="Husleje (fast)")) additions.push({id:uid(),date,description:"Husleje (fast)",amount:-Math.abs(fixedRent||0),category:"Husleje",localDate:true});
-    });
-    if (additions.length) { setTransactions([...additions,...transactions]); flash("tools", `${additions.length} huslejeposter tilføjet.`); }
+    mset.add(lastRentMonth());
+    const amount = -Math.abs(rent.amount||0);
+    let changed = 0;
+    const updated = transactions.map(t => t.description === RENT_TEXT && t.amount !== amount ? (changed++, {...t, amount}) : t);
+    const additions = [...mset].sort().filter(ym => !updated.some(t => t.date === monthEnd(ym) && t.description === RENT_TEXT)).map(rentTx);
+    if (additions.length || changed) {
+      setTransactions([...additions, ...updated]);
+      flash("tools", [additions.length && `${additions.length} huslejeposter tilføjet`, changed && `${changed} rettet til ${fmt(rent.amount)}`].filter(Boolean).join(", ").replace(/\.?$/, "."));
+    }
     else flash("tools", "Allerede tilføjet for alle måneder.");
   };
+
+  // Books the fixed rent each month and draws it from the chosen manual account (e.g. savings), once per month.
+  useEffect(() => {
+    if (!rent.auto || !(rent.amount > 0)) return;
+    const upTo = lastRentMonth();
+    if (rent.paidThrough && rent.paidThrough >= upTo) return;
+    // First run: the account balance the user typed in already reflects past rent, so only post, don't draw.
+    const first = !rent.paidThrough;
+    const due = [];
+    for (let ym = first ? upTo : addMonths(rent.paidThrough, 1); ym <= upTo; ym = addMonths(ym, 1)) due.push(ym);
+    setTransactions(txs => {
+      const missing = due.filter(ym => !txs.some(t => t.date === monthEnd(ym) && t.description === RENT_TEXT));
+      return missing.length ? [...missing.map(rentTx), ...txs] : txs;
+    });
+    const assetId = rent.assetId || (first ? assets.find(a => a.source !== "bank" && /opspar/i.test(a.name))?.id : null) || null;
+    if (!first && assetId) {
+      setAssets(as => as.map(a => a.id === assetId ? {...a, value: Math.round(((+a.value||0) - due.length * Math.abs(rent.amount)) * 100) / 100} : a));
+    }
+    setRent(r => ({...r, assetId, paidThrough: upTo}));
+  }, [rent]);
 
   // ---------- bank sync (Enable Banking via worker) ----------
 
@@ -972,7 +1003,7 @@ function App() {
   // ---------- backup ----------
 
   const exportData = () => {
-    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,exported:new Date().toISOString()};
+    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,exported:new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1461,7 +1492,15 @@ function App() {
     <div className="section">
       <div className="section-head"><h2>Værktøjer</h2></div>
       <div className="card stack">
-        <label className="field">Fast husleje pr. måned (kr., bogføres sidste dag)<input className="input" type="number" inputMode="decimal" value=${fixedRent} onChange=${e=>setFixedRent(+e.target.value)} /></label>
+        <label className="field">Fast husleje pr. måned (kr., bogføres sidste dag)<input className="input" type="number" inputMode="decimal" value=${rent.amount} onChange=${e=>setRent({...rent, amount:+e.target.value})} /></label>
+        <label className="field">Betales fra<select className="input" value=${rent.assetId || ""} onChange=${e=>setRent({...rent, assetId:e.target.value || null})}>
+          <option value="">Ingen konto (kun budget)</option>
+          ${assets.filter(a => a.source !== "bank").map(a => html`<option key=${a.id} value=${a.id}>${a.name}</option>`)}
+        </select></label>
+        <label style=${{display:"flex", alignItems:"center", gap:10, cursor:"pointer"}}><input type="checkbox" style=${{width:18, height:18, accentColor:"var(--accent)"}} checked=${rent.auto} onChange=${e=>setRent({...rent, auto:e.target.checked})} /> <span>Bogfør automatisk hver måned</span></label>
+        <div className="small faint">${rent.auto
+          ? `Huslejen bogføres den sidste dag i måneden${rent.assetId ? " og trækkes samtidig fra kontoen ovenfor" : ""}.${rent.paidThrough ? ` Senest: ${monthLabel(rent.paidThrough)}.` : ""}`
+          : "Slået fra. Brug knappen nedenfor for at tilføje huslejen selv."}</div>
         <button className="btn" onClick=${genRent}>Tilføj husleje for alle måneder</button>
         <button className="btn" onClick=${recategorizeAll}>Genkategorisér alle poster</button>
         <div className="small faint">Genkategorisering rører ikke poster, hvor du selv har valgt kategori.</div>
