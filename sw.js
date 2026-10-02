@@ -1,5 +1,5 @@
 // Bump CACHE when you deploy changes, so installed apps pick up the new files.
-const CACHE = "okonomi-v20";
+const CACHE = "okonomi-v21";
 const CDN = "https://esm.sh";
 const APP_FILES = [
   "./", "index.html", "app.js", "styles.css", "manifest.webmanifest",
@@ -34,10 +34,14 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // The app's own files: network first so updates arrive, cache when offline.
+  // The app's own files: network first so updates arrive, cache when offline. "no-cache" makes the
+  // browser ask GitHub every time (a cheap 304 when nothing changed) instead of reusing its HTTP cache,
+  // which GitHub Pages allows for 10 minutes and which kept serving old versions after an update.
+  // A navigation Request can't be copied with options, so it is fetched by URL.
   if (url.origin === self.location.origin) {
+    const fresh = req.mode === "navigate" ? fetch(req.url, { cache: "no-cache" }) : fetch(req, { cache: "no-cache" });
     e.respondWith(
-      fetch(req).then((res) => {
+      fresh.then((res) => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
         return res;
       }).catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match("index.html")))

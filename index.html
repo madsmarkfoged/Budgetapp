@@ -29,7 +29,12 @@
   <script type="module" src="app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+      // When a new version's service worker takes over, reload once so the new files are used right away.
+      var hadController = !!navigator.serviceWorker.controller, reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", function () {
+        if (hadController && !reloaded) { reloaded = true; location.reload(); }
+      });
+      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(() => {}));
     }
   </script>
 </body>
