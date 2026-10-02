@@ -359,9 +359,57 @@ const WEEKDAYS = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag",
 
 // An offer fits an ingredient when every word of the ingredient starts a word in the offer heading
 // ("hakket oksekød" ↔ "Hakket oksekød 8-12 %"), so "ris" doesn't match "pris".
+// Offers that contain the ingredient's words but are a different product: matched as plain text in the
+// lowercased heading ("yoghurt" must not become a drinking yoghurt, "ris" not rice pudding).
+const OFFER_EXCLUDE = {
+  "yoghurt": ["drik", "cheasy", "frugt", "jordbær", "hindbær", "vanilje", "mango", "smoothie", "müsli", "skyr"],
+  "græsk yoghurt": ["drik", "frugt", "jordbær", "hindbær", "vanilje", "mango", "honning"],
+  "skyr": ["drik", "frugt", "jordbær", "hindbær", "vanilje", "mango"],
+  "ost": ["ostesnack", "ostepop", "ostekage", "ostehaps", "ostekiks", "flødeost", "smøreost", "hytteost", "pizza", "toast", "burger"],
+  "salat": ["k-salat", "pålæg", "hønse", "kartoffelsalat", "pastasalat", "tunsalat", "rejesalat", "dressing"],
+  "kylling": ["pålæg", "nugget", "kebab", "suppe", "bouillon", "salat"],
+  "ris": ["risalamande", "riskiks", "rispapir", "risret", "nudel", "risengrød", "pops"],
+  "pasta": ["pastasalat", "pastasauce", "pastaret", "færdigret"],
+  "spaghetti": ["sauce", "færdigret"],
+  "løg": ["løgringe", "stegte løg", "ristede løg", "chips"],
+  "kartofler": ["chips", "pommes", "kartoffelsalat", "kartoffelmos", "rösti"],
+  "laks": ["røget", "gravad", "rogn", "pålæg", "salat"],
+  "hakket oksekød": ["burger", "frikadelle", "færdigret", "lasagne"],
+  "hakket svinekød": ["frikadelle", "færdigret"],
+  "spinat": ["chips", "tærte", "dip"],
+  "fløde": ["flødeboll", "flødeost", "flødeis", "flødekaramel", "flødekage"],
+  "tun": ["tunsalat", "pålæg", "mousse"],
+  "ingefær": ["shot", "øl", "drik", "juice", "kiks"],
+  "citron": ["juice", "vand", "sodavand", "citronmåne", "kage", "the"],
+  "agurk": ["salat", "sylte", "pickles"],
+  "mælk": ["kakao", "chokolade", "kokos", "mandel", "havre", "soja", "drik"],
+  "æg": ["påske", "chokolade", "kinder", "nudel"],
+  "kokosmælk": ["drik"],
+  "bacon": ["chips", "snack"],
+  "kalkun": ["pålæg"],
+  "skinke": ["salat"],
+  "hytteost": ["frugt"],
+};
+// Compound words that also count as the ingredient ("piskefløde" is fløde, "jasminris" is ris).
+const OFFER_ALIASES = {
+  "fløde": ["piskefløde", "madlavningsfløde", "kogefløde"],
+  "ris": ["jasminris", "basmatiris", "fuldkornsris", "parboiled"],
+  "pasta": ["fuldkornspasta", "penne", "fusilli", "spaghetti", "tagliatelle", "rigatoni", "farfalle"],
+  "salat": ["icebergsalat", "hjertesalat", "romainesalat", "salathoved"],
+  "tomatsauce": ["pastasauce", "passata"],
+  "nudler": ["ægnudler", "risnudler", "woknudler"],
+  "ost": ["revet ost", "skiveost", "mozzarella", "cheddar", "gouda"],
+};
+// Never an ingredient, whatever the words say.
+const OFFER_EXCLUDE_ALL = ["kattemad", "hundemad", "kattefoder", "hundefoder", "dyrefoder", "shampoo", "vaskemiddel", "opvask"];
+
 function offerFits(term, heading) {
-  const h = " " + (heading || "").toLowerCase().replace(/[^a-zæøå0-9]+/g, " ");
-  return term.toLowerCase().split(/\s+/).filter(Boolean).every(w => h.includes(" " + w));
+  const raw = (heading || "").toLowerCase();
+  const h = " " + raw.replace(/[^a-zæøå0-9]+/g, " ");
+  const t = term.toLowerCase();
+  if ([...OFFER_EXCLUDE_ALL, ...(OFFER_EXCLUDE[t] || [])].some(x => raw.includes(x))) return false;
+  if ((OFFER_ALIASES[t] || []).some(a => raw.includes(a))) return true;
+  return t.split(/\s+/).filter(Boolean).every(w => h.includes(" " + w));
 }
 
 // Normal (non-offer) shelf prices per typical pack, in kr. Tjek only knows offers, so the plan uses these
@@ -395,18 +443,21 @@ const planCost = (meals, staples = []) => {
 // save the most there – favourites count as 20 kr. extra, so offers still decide – and price the whole shop,
 // normal-price items and the weekly staples included. The cheapest option wins; a second store must save at
 // least 25 kr. to be worth the trip.
-function planWeek(pool, offersByTerm, stores, count, staples = []) {
+function planWeek(pool, offersByTerm, stores, count, staples = [], rejected = []) {
   const terms = [...new Set([...staples, ...pool.flatMap(m => m.ingredients)])];
   const best = {}, normal = {};
   for (const t of terms) {
     best[t] = {};
     normal[t] = normalPrice(t, offersByTerm[t]);
-    for (const o of offersByTerm[t] || []) if (stores.includes(o.store) && !best[t][o.store] && offerFits(t, o.heading)) best[t][o.store] = o;
+    for (const o of offersByTerm[t] || [])
+      if (stores.includes(o.store) && !best[t][o.store] && offerFits(t, o.heading) && !rejected.includes((o.heading || "").toLowerCase())) best[t][o.store] = o;
   }
+  // An ingredient a weekly staple already covers ("yoghurt" ← "græsk yoghurt") isn't bought again.
+  const byStaple = (t) => !staples.includes(t) && staples.some(st => offerFits(t, st));
   const offerIn = (t, set) => set.map(st => best[t][st]).filter(Boolean).sort((x, y) => x.price - y.price)[0] || null;
   const evaluate = (set) => {
     const rated = pool.map(m => {
-      const items = m.ingredients.map(t => ({ term: t, offer: offerIn(t, set), normal: normal[t] }));
+      const items = m.ingredients.map(t => byStaple(t) ? { term: t, offer: null, normal: 0, staple: true } : { term: t, offer: offerIn(t, set), normal: normal[t] });
       const saving = items.reduce((s, i) => s + (i.offer ? Math.max(0, i.normal - i.offer.price) : 0), 0);
       return { mealId: m.id, name: m.name, url: m.url || null, fav: !!m.fav, items, value: saving + (m.fav ? 20 : 0) };
     }).sort((x, y) => y.value - x.value);
@@ -1996,7 +2047,7 @@ function App() {
         const chunk = terms.slice(i, i + 6);
         (await Promise.all(chunk.map(offersFor))).forEach((l, k) => { lists[chunk[k]] = l; });
       }
-      const r = planWeek(mealPool, lists, shopStores, Math.ceil(nights / cookDays), staples);
+      const r = planWeek(mealPool, lists, shopStores, Math.ceil(nights / cookDays), staples, shop.rejected || []);
       setShop({...shop, plan: { created: isoDate(new Date()), nights, cookDays, ...r }});
     } finally { setPlanBusy(false); }
   };
@@ -2012,6 +2063,14 @@ function App() {
     setShop({...shop, plan: {...plan, meals, alts: [...rest, old], swapped: true, ...planCost(meals, plan.staples || [])}});
     setPickMeal(null);
   };
+  // "Ikke det her": buy that item at normal price instead, and never suggest that product again.
+  const rejectOffer = (heading) => {
+    const plan = shop.plan, h = (heading || "").toLowerCase();
+    const strip = (it) => it.offer && (it.offer.heading || "").toLowerCase() === h ? { ...it, offer: null } : it;
+    const meals = plan.meals.map(m => ({ ...m, items: m.items.map(strip) })), fixed = (plan.staples || []).map(strip);
+    setShop({...shop, rejected: [...new Set([...(shop.rejected || []), h])], plan: {...plan, meals, staples: fixed, ...planCost(meals, fixed)}});
+    flash("plan", `"${heading}" bliver ikke foreslået igen.`);
+  };
   const randomMeal = (i) => { const n = shop.plan?.alts?.length || 0; if (n) replaceMeal(i, Math.floor(Math.random() * n)); };
 
   const PlanTab = () => {
@@ -2025,7 +2084,7 @@ function App() {
     };
     const old = plan && !plan.compare; // a plan made before prices were compared
     const shopping = {};
-    if (plan && !old) for (const it of [...(plan.staples || []), ...plan.meals.flatMap(m => m.items)]) {
+    if (plan && !old) for (const it of [...(plan.staples || []), ...plan.meals.flatMap(m => m.items)].filter(it => !it.staple)) {
       const key = it.offer ? it.offer.store : "Normalpris";
       (shopping[key] ||= {})[it.term] ||= it;
     }
@@ -2059,6 +2118,7 @@ function App() {
             </form>
           </div>
         </div>
+        ${(shop.rejected || []).length > 0 && html`<div className="small faint">${shop.rejected.length} tilbud er fravalgt. <button className="link-btn small" onClick=${()=>setShop({...shop, rejected: []})}>Nulstil</button></div>`}
         <button className="btn primary block" disabled=${planBusy || !mealPool.length} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : plan ? "Lav ny madplan" : "Lav madplan"}</button>
       </div>
 
@@ -2083,7 +2143,7 @@ function App() {
             <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}</div>
             <div className="main">
               <div className="title" style=${{whiteSpace:"normal"}}>${m.fav ? "♥ " : ""}${m.name}${PROTEIN_MEALS.has(m.name) && html` <span className="chip info" style=${{fontSize:11, padding:"1px 7px"}}>Proteinrig</span>`}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
-              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div>
+              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.staple ? "fast vare" : it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div>
               ${plan.alts?.length > 0 && html`<div style=${{display:"flex", flexWrap:"wrap", gap:14, marginTop:6}}>
                 <button className="link-btn small" onClick=${()=>replaceMeal(i)}>Byt</button>
                 <button className="link-btn small" onClick=${()=>randomMeal(i)}>Tilfældig</button>
@@ -2106,8 +2166,9 @@ function App() {
             <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store === "Normalpris" ? `Normalpris – køb i ${plan.stores[0]}` : `${store} – tilbud`}</div>
             <div className="list">${Object.values(items).map(it => html`<div key=${it.term} className="row" style=${{minHeight:48}}>
               ${it.offer?.image ? html`<img src=${it.offer.image} alt="" loading="lazy" style=${{width:36, height:36, objectFit:"contain", borderRadius:6, background:"#fff"}} />` : null}
-              <div className="main"><div className="title">${it.term}</div>${it.offer && html`<div className="sub">${it.offer.heading}</div>`}</div>
-              <div className="end num">${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</div>
+              <div className="main"><div className="title">${it.term}</div>${it.offer && html`<div className="sub" style=${{whiteSpace:"normal"}}>${it.offer.heading}</div>`}</div>
+              <div className="end"><div className="num">${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</div>
+                ${it.offer && html`<button className="link-btn small" onClick=${()=>rejectOffer(it.offer.heading)}>Ikke det her</button>`}</div>
             </div>`)}</div>
           </div>`)}</div>
           <div className="small faint" style=${{marginTop:8}}>Normalpriser er skøn eller tilbudsavisens førpris. Hver ret regnes med sine egne pakker; listen viser hver vare én gang.</div>
