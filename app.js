@@ -1361,7 +1361,6 @@ function App() {
     if ((+cash || 0) > 0) groups.Kontant = +cash;
     const alloc = Object.entries(groups).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
     const allocTotal = alloc.reduce((s, [,v]) => s + v, 0);
-    const rejsePct = rejse.goal > 0 ? Math.min(100, rejseSaved / rejse.goal * 100) : 0;
     const sorted = holdings.slice().sort((a, b) => holdingValue(b) - holdingValue(a));
     return html`<div>
       <div className="hero invest">
@@ -1454,17 +1453,6 @@ function App() {
         </div>
       </div>
 
-      <div className="section">
-        <div className="section-head"><h2>Mål</h2><button className="link-btn" onClick=${()=>goSub("trips")}>Redigér</button></div>
-        <button className="card row tap" style=${{display:"block", borderBottom:"none"}} onClick=${()=>goSub("trips")}>
-          <div style=${{display:"flex",alignItems:"center",gap:12}}>
-            <div className="sq" style=${{background:"#EF9F2733", color: tint("#EF9F27", 0.3)}}><${Icon} name="plane" /></div>
-            <div style=${{flex:1,minWidth:0}}><div>Rejsepulje</div><div className="small muted">${fmt(rejseSaved)} af ${fmt(rejse.goal)}${tripsOwed > 0 ? ` · søs mangler ${fmt(tripsOwed)}` : ""}</div></div>
-            <div className="num" style=${{fontWeight:600}}>${Math.round(rejsePct)} %</div>
-          </div>
-          <div className="bar" style=${{height:8, marginTop:10}}><div style=${{width:`${rejsePct}%`, background:"#EF9F27"}}></div></div>
-        </button>
-      </div>
 
       ${manual.length > 0 && html`<div className="section">
         <button className="btn soft block" disabled=${priceLoading} onClick=${updatePricesAI}><${Icon} name="spark" /> ${priceLoading ? "Henter kurser…" : "Opdater manuelle kurser med AI"}</button>
