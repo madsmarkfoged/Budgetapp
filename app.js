@@ -141,11 +141,6 @@ function nextPayday(now = new Date()) {
   return { date: p, days: Math.round((p - today) / 86400e3) };
 }
 
-function greeting() {
-  const h = new Date().getHours();
-  return h < 5 ? "God nat" : h < 10 ? "God morgen" : h < 17 ? "God dag" : "God aften";
-}
-
 function guessCategory(desc) {
   const d = (desc||"").toLowerCase();
   if (/løn|lønoverf|loenoverf|salary|\bgage\b/.test(d)) return "Løn";
@@ -1973,7 +1968,7 @@ function App() {
 
   // ================= shell =================
 
-  const pageTitle = page === "home" ? greeting()
+  const pageTitle = page === "home" ? "Overblik"
     : page === "more" && sub ? MORE_PAGES.find(p => p.id === sub)?.label
     : page === "invest" ? "Investeringer"
     : page === "budget" ? monthName(budgetMonthSel)
