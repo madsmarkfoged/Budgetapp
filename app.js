@@ -650,7 +650,7 @@ function App() {
   const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
   const [shopDraft, setShopDraft] = useState("");
   const [foodTab, setFoodTab] = useState("plan");
-  const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "" });
+  const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "", url: "" });
   const [planBusy, setPlanBusy] = useState(false);
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
   const [saveError, setSaveError] = useState(false);
@@ -1866,7 +1866,7 @@ function App() {
       const start = new Date();
       setShop({...shop, plan: {
         created: isoDate(start), stores: r.stores,
-        days: r.meals.map((x, i) => ({ day: WEEKDAYS[(start.getDay() + i) % 7], mealId: x.meal.id, name: x.meal.name, items: x.items })),
+        days: r.meals.map((x, i) => ({ day: WEEKDAYS[(start.getDay() + i) % 7], mealId: x.meal.id, name: x.meal.name, url: x.meal.url || null, items: x.items })),
       }});
     } finally { setPlanBusy(false); }
   };
@@ -1911,7 +1911,7 @@ function App() {
           <div className="list">${plan.days.map((d, i) => html`<div key=${i} className="row" style=${{alignItems:"flex-start"}}>
             <div style=${{width:64, flexShrink:0, fontWeight:600, paddingTop:2}}>${d.day}</div>
             <div className="main">
-              <div className="title" style=${{whiteSpace:"normal"}}>${d.name}</div>
+              <div className="title" style=${{whiteSpace:"normal"}}>${d.name}${d.url && html` <a href=${d.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
               <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${d.items.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term}${it.offer ? ` · ${kr(it.offer.price)}` : ""}</span>`)}</div>
             </div>
           </div>`)}</div>
@@ -1945,7 +1945,8 @@ function App() {
     const addOwn = () => {
       const name = mealDraft.name.trim(), ingredients = parse(mealDraft.ingredients);
       if (!name || !ingredients.length) return;
-      setMeals([...meals, { id: uid(), name, ingredients, fav: true }]); setMealDraft({ name: "", ingredients: "" });
+      const url = /^https?:\/\//.test(mealDraft.url.trim()) ? mealDraft.url.trim() : null;
+      setMeals([...meals, { id: uid(), name, ingredients, fav: true, url }]); setMealDraft({ name: "", ingredients: "", url: "" });
     };
     const isFav = (name) => meals.some(m => m.name === name && m.fav);
     const own = meals.filter(m => !MEAL_TEMPLATES.some(([n]) => n === m.name));
@@ -1955,7 +1956,7 @@ function App() {
         <button className=${"icon-btn" + (m.fav ? " on" : "")} style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name} er ${m.fav ? "" : "ikke "}en yndlingsret`}
           onClick=${()=> m.template || MEAL_TEMPLATES.some(([n]) => n === m.name) ? fromTemplate(m.name, m.ingredients) : setMeals(meals.map(x => x.id === m.id ? {...x, fav: !x.fav} : x))}>${m.fav ? "♥" : "♡"}</button>
         <div className="main">
-          <div className="title">${m.name}</div>
+          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
           ${m.fav && !m.template
             ? html`<input className="input sm" style=${{marginTop:6}} value=${m.ingredients.join(", ")} aria-label=${`Ingredienser i ${m.name}`} onChange=${e=>setMeals(meals.map(x => x.id === m.id ? {...x, ingredients: parse(e.target.value)} : x))} />`
             : html`<div className="sub" style=${{whiteSpace:"normal"}}>${m.ingredients.join(", ")}</div>`}
@@ -1967,6 +1968,7 @@ function App() {
         <div className="card stack">
           <input className="input" placeholder="Navn, fx Mormors boller i karry" value=${mealDraft.name} onChange=${e=>setMealDraft({...mealDraft, name: e.target.value})} aria-label="Rettens navn" />
           <input className="input" placeholder="Ingredienser adskilt af komma, fx hakket svinekød, ris, karry" value=${mealDraft.ingredients} onChange=${e=>setMealDraft({...mealDraft, ingredients: e.target.value})} aria-label="Ingredienser" />
+          <input className="input" type="url" placeholder="Link til opskriften (valgfrit)" value=${mealDraft.url} onChange=${e=>setMealDraft({...mealDraft, url: e.target.value})} aria-label="Link til opskriften" />
           <button className="btn primary" disabled=${!mealDraft.name.trim() || !parse(mealDraft.ingredients).length} onClick=${addOwn}>Tilføj ret</button>
         </div>
       </div>
