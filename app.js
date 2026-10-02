@@ -689,6 +689,7 @@ function App() {
   const tripsUsed = rejse.trips.reduce((s, tr) => s + tripStats(tr).half, 0);
   const rejseLeft = (+rejse.goal || 0) - tripsUsed;
   const tripsOwed = rejse.trips.reduce((s, tr) => s + Math.max(0, tripStats(tr).owed), 0);
+  const earmarkAsset = assets.find(a => a.id === rejse.accountId) || (!rejse.accountId ? assets.find(a => a.source !== "bank" && /opspar/i.test(a.name)) : null) || null;
 
   // Month-to-date spending per category vs. the same days last month (calendar months).
   const spendingInsight = () => {
@@ -1223,14 +1224,19 @@ function App() {
               <div className="main"><div className="title">${a.name}</div><div className="sub">${ebSession?.bank || "Sparekassen Kronjylland"}${a.iban ? " · " + a.iban.slice(-4) : ""}</div></div>
               <div className="end num">${fmt(a.value)}</div>
             </button>`)}
-            ${(holdings.length > 0 || cash) && html`<button style=${stag(row++)} className="row" onClick=${()=>setPage("invest")}>
+            ${(holdings.length > 0 || cash > 0) && html`<button style=${stag(row++)} className="row" onClick=${()=>setPage("invest")}>
               ${badge("SX", "#6B3FA0")}
               <div className="main"><div className="title">Depot</div><div className="sub">Saxo · ${holdings.length} papirer${sync.saxo ? "" : " · manuelt"}</div></div>
               <div className="end num">${fmt(invValue)}</div>
             </button>`}
             ${otherAssets.map(a => html`<button key=${a.id} style=${stag(row++)} className="row" onClick=${()=>goSub("wealth")}>
               ${badge((a.name||"?").slice(0,2).toUpperCase(), "var(--surface-3)", "var(--text-2)")}
-              <div className="main"><div className="title">${a.name}</div><div className="sub">Manuel</div></div>
+              ${a === earmarkAsset && rejseLeft > 0 ? (() => {
+                const val = +a.value || 0, ear = Math.min(Math.max(0, rejseLeft), val);
+                return html`<div className="main"><div className="title">${a.name}</div>
+                  <div className="sub">Fri ${fmt(val - ear)} · <span style=${{color:"#EF9F27"}}>${fmt(ear)} til rejser</span></div>
+                  <div className="bar" style=${{height:4, marginTop:6}}><div style=${{width:`${val > 0 ? ear / val * 100 : 0}%`, background:"#EF9F27"}}></div></div></div>`;
+              })() : html`<div className="main"><div className="title">${a.name}</div><div className="sub">Manuel</div></div>`}
               <div className="end num">${fmt(a.value)}</div>
             </button>`)}
             ${sumLiab > 0 && html`<button style=${stag(row++)} className="row" onClick=${()=>goSub("wealth")}>
@@ -1525,8 +1531,15 @@ function App() {
           <div className="num" style=${{fontWeight:600}}>${Math.round(pct)} %</div>
         </div>
         <div className="bar" style=${{height:10}}><div style=${{width:`${pct}%`, background:"#EF9F27"}}></div></div>
-        <div className="small muted">I har hver øremærket ${fmt(goal)} til rejser – dine står på opsparingen. Hver tur trækker jeres halvdel af prisen fra.${tripsUsed > 0 ? ` Brugt indtil nu: ${fmt(tripsUsed)} hver.` : ""}</div>
-        <label className="field">Øremærket pr. person (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.goal} onChange=${e=>setRejse({...rejse, goal:+e.target.value})} /></label>
+        <div className="small muted">I har hver øremærket ${fmt(goal)} til rejser. Hver tur trækker jeres halvdel af prisen fra.${tripsUsed > 0 ? ` Brugt indtil nu: ${fmt(tripsUsed)} hver.` : ""}</div>
+        <div className="grid2">
+          <label className="field">Øremærket pr. person (kr.)<input className="input" type="number" inputMode="decimal" value=${rejse.goal} onChange=${e=>setRejse({...rejse, goal:+e.target.value})} /></label>
+          <label className="field">Står på konto<select className="input" value=${earmarkAsset?.id || ""} onChange=${e=>setRejse({...rejse, accountId: e.target.value || "none"})}>
+            <option value="">Ingen</option>
+            ${assets.filter(a => a.source !== "bank").map(a => html`<option key=${a.id} value=${a.id}>${a.name}</option>`)}
+          </select></label>
+        </div>
+        ${earmarkAsset && html`<div className="small muted">På ${earmarkAsset.name} er ${fmt(Math.min(Math.max(0, rejseLeft), +earmarkAsset.value || 0))} øremærket til rejser, og ${fmt(Math.max(0, (+earmarkAsset.value || 0) - Math.max(0, rejseLeft)))} er fri.</div>`}
         ${tripsOwed > 0 && html`<div className="tip" style=${{marginTop:0}}><div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="coins" /></div><div>Søs mangler at betale dig <b>${fmt(tripsOwed)}</b> i alt.</div></div>`}
       </div>
 
