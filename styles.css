@@ -68,7 +68,12 @@
 html, body { margin: 0; scrollbar-width: none; }
 /* The app scrolls inside #root instead of the page itself, so the scroll indicator can be hidden (iOS shows
    one for the page that CSS can't remove). */
-#root { position: fixed; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: none; scrollbar-width: none; }
+/* iOS 26 bug: in an installed web app (viewport-fit=cover + black-translucent) the viewport that fixed
+   elements and 100%/100dvh use ends ~59pt above the screen's bottom edge; only 100lvh is the full screen.
+   --ios-gap is that missing strip (0 everywhere else), and fixed things at the bottom are moved down by it. */
+:root { --ios-gap: 0px; }
+@media (display-mode: standalone) { :root { --ios-gap: max(0px, calc(100lvh - 100dvh)); } }
+#root { position: fixed; inset: 0 0 calc(-1 * var(--ios-gap)) 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: none; scrollbar-width: none; }
 #root::-webkit-scrollbar, .cook-sheet::-webkit-scrollbar, html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .cook-sheet { scrollbar-width: none; }
 body {
@@ -118,10 +123,10 @@ button:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); out
 
 /* bottom nav */
 .nav {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  position: fixed; left: 0; right: 0; bottom: calc(-1 * var(--ios-gap)); z-index: 10;
   background: var(--nav); border-top: 0.5px solid var(--border);
   /* Sit closer to the iPhone's home indicator than the full safe area (which leaves a big gap). */
-  padding-bottom: max(4px, calc(env(safe-area-inset-bottom) - 18px));
+  padding-bottom: max(4px, calc(min(34px, env(safe-area-inset-bottom)) - 18px));
 }
 .nav-inner { max-width: 560px; margin: 0 auto; display: flex; }
 .nav button {
@@ -292,7 +297,7 @@ select.input { appearance: auto; }
 .ai-out { white-space: pre-wrap; line-height: 1.7; font-size: 14px; }
 
 .toast {
-  position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 20;
+  position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom) - var(--ios-gap)); z-index: 20;
   transform: translateX(-50%); width: min(528px, calc(100% - 32px));
   display: flex; align-items: center; gap: 12px; justify-content: space-between;
   background: var(--text); color: var(--bg); border-radius: var(--r-md); padding: 11px 14px; font-size: 14px;
@@ -354,7 +359,7 @@ select.input { appearance: auto; }
 .macro-grid b { font-size: 15px; font-variant-numeric: tabular-nums; }
 .macro-grid span { font-size: 11.5px; color: var(--text-2); }
 /* "Se opskrift" – full-screen cooking view */
-.cook-sheet { position: fixed; inset: 0; z-index: 1000; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 32px); animation: cookIn .22s var(--ease, ease) both; }
+.cook-sheet { position: fixed; inset: 0 0 calc(-1 * var(--ios-gap)) 0; z-index: 1000; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 32px); animation: cookIn .22s var(--ease, ease) both; }
 @keyframes cookIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 .cook-inner { max-width: 640px; margin: 0 auto; }
 .cook-ings { margin: 0; padding: 0; list-style: none; background: var(--surface, var(--card)); border-radius: 14px; }
@@ -375,15 +380,15 @@ select.input { appearance: auto; }
 .mini-bars { display: flex; align-items: flex-end; gap: 3px; height: 28px; width: 60px; flex-shrink: 0; }
 .mini-bars i { flex: 1; border-radius: 2px; min-height: 2px; }
 /* Face ID lock */
-.lock-screen { position: fixed; inset: 0; z-index: 3000; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.lock-screen { position: fixed; inset: 0 0 calc(-1 * var(--ios-gap)) 0; z-index: 3000; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px; }
 .lock-inner { width: 100%; max-width: 340px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
 .lock-inner details { width: 100%; text-align: left; }
 .lock-icon { width: 72px; height: 72px; border-radius: 22px; background: var(--accent-bg); color: var(--accent); display: flex; align-items: center; justify-content: center; }
 .lock-icon svg.ic { width: 34px; height: 34px; }
 /* Quick expense */
-.fab { position: fixed; right: max(16px, calc(50% - 264px)); bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 15; width: 56px; height: 56px; border-radius: 50%; border: 0; background: var(--accent); color: var(--bg); box-shadow: 0 8px 24px rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.fab { position: fixed; right: max(16px, calc(50% - 264px)); bottom: calc(84px + env(safe-area-inset-bottom) - var(--ios-gap)); z-index: 15; width: 56px; height: 56px; border-radius: 50%; border: 0; background: var(--accent); color: var(--bg); box-shadow: 0 8px 24px rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .fab svg.ic { width: 26px; height: 26px; stroke-width: 2.4; }
-.sheet-backdrop { position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; animation: cookIn .2s ease both; }
+.sheet-backdrop { position: fixed; inset: 0 0 calc(-1 * var(--ios-gap)) 0; z-index: 900; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; animation: cookIn .2s ease both; }
 .sheet { width: 100%; max-width: 560px; background: var(--surface); border-radius: 20px 20px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
 .quick-amt { font-size: 32px; font-weight: 700; text-align: center; padding: 14px; }
 
