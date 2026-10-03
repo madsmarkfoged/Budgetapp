@@ -7,7 +7,10 @@
   <meta name="description" content="Budget, transaktioner, formue og investeringer – gemt lokalt på din enhed.">
   <meta name="theme-color" content="#0B0F1A">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- "black", not "black-translucent": with translucent, iOS sizes the installed app's window to the screen
+       minus the top safe area, leaving a strip at the bottom the app can't draw in (seen on iOS 26).
+       iOS reads this when the app is added to the home screen, so it only changes after re-adding it. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <script>
     (function () {
       var t = "dark";
