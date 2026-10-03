@@ -1718,6 +1718,13 @@ function App() {
   // Opening the app with ?add=1 (a home-screen shortcut) goes straight to a quick expense.
   useEffect(() => { if (new URLSearchParams(location.search).get("add")) setQuick({ amt: "", cat: "Mad & dagligvarer", note: "", kind: "out" }); }, []);
 
+  // The same bank account added twice (one bank connection per device before IBAN matching): keep the first.
+  useEffect(() => {
+    const seen = new Set();
+    const next = assets.filter(a => { if (a.source !== "bank" || !a.iban) return true; if (seen.has(a.iban)) return false; seen.add(a.iban); return true; });
+    if (next.length !== assets.length) setAssets(next);
+  }, [assets]);
+
   const recurringIn = detectRecurring(transactions, 1);
   const subscriptionsRaw = detectSubscriptions(transactions, subsHidden);
   // subsShare[subKey] is the key of the payment-in that covers part of it, or "none"; unset means guess.
@@ -1938,8 +1945,10 @@ function App() {
       const meta = (session.accounts || []).find(a => a.uid === acc.uid) || {};
       const id = "eb:" + acc.uid;
       const name = meta.name || "Konto";
-      const i = nextAssets.findIndex(a => a.id === id);
-      const entry = { id, name: i >= 0 ? nextAssets[i].name : name, value: Math.round(acc.balance * 100) / 100, source: "bank", iban: meta.iban || null };
+      // Each device has its own bank connection, and each connection gives the account a new uid – so the
+      // same account (same IBAN) is matched on the IBAN too, and keeps the id it already has.
+      const i = nextAssets.findIndex(a => a.id === id || (meta.iban && a.source === "bank" && a.iban === meta.iban));
+      const entry = { id: i >= 0 ? nextAssets[i].id : id, name: i >= 0 ? nextAssets[i].name : name, value: Math.round(acc.balance * 100) / 100, source: "bank", iban: meta.iban || null };
       if (i >= 0) nextAssets[i] = entry; else nextAssets.push(entry);
     }
     setTransactions(merged.map(t => ({...t})));
