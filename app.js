@@ -483,6 +483,7 @@ function App() {
   const [doneDraft, setDoneDraft] = useState({ rate: 0, note: "", freeze: 0 });
   const [openRecipe, setOpenRecipe] = useState(null);
   const [mealQ, setMealQ] = useState("");
+  const [, setStoreTick] = useState(0);              // re-render after removing a backup from localStorage
   const [mealFilter, setMealFilter] = useState("alle");
   const [mealOpen, setMealOpen] = useState(null);      // name of the meal card opened under Retter
   const [addOpen, setAddOpen] = useState(false);       // "+ Ny ret": link, Valdemarsro and your own  // name of the meal whose amounts are open
@@ -3479,6 +3480,30 @@ function App() {
     </div>`;
   };
 
+  // Browser storage: ~5 MB per site. One-time backups (budget_data_backup_…) can be saved as a file and removed.
+  const StorageCard = () => {
+    let used = 0; const backups = [];
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i), n = (localStorage.getItem(k) || "").length; used += n; if (/^budget_data_backup_/.test(k)) backups.push([k, n]); } } catch {}
+    const mb = (n) => (n * 2 / 1048576).toLocaleString("da-DK", { maximumFractionDigits: 1 }) + " MB";
+    const pct = Math.min(100, used * 2 / (5 * 1048576) * 100);
+    const save = (k) => {
+      const url = URL.createObjectURL(new Blob([store.get(k) || ""], { type: "application/json" }));
+      const a = document.createElement("a"); a.href = url; a.download = `${k}.json`; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+    const remove = (k) => { if (!confirm(`Slet ${k.replace("budget_data_backup_", "backup ")} fra denne enhed? Det kan ikke fortrydes.`)) return; store.remove(k); setStoreTick(t => t + 1); flash("storage", "Backuppen er slettet."); };
+    return html`<div className="card stack" style=${{marginTop:12}}>
+      <div style=${{fontWeight:600}}>Lagerplads på denne enhed</div>
+      <div className="small muted">${mb(used)} brugt af ca. 5 MB. Bliver den fuld, kan appen ikke gemme.</div>
+      <div className="bar" style=${{height:6}}><div style=${{width:`${pct}%`, background: pct > 80 ? "var(--neg)" : "var(--accent)"}}></div></div>
+      ${backups.length > 0 && html`<div className="list">${backups.map(([k, n]) => html`<div key=${k} className="row" style=${{minHeight:48}}>
+        <div className="main"><div className="title">Backup ${k.replace("budget_data_backup_", "").replace(/_/g, " ")}</div><div className="sub">${mb(n)} · engangskopi fra en tidligere ændring</div></div>
+        <div className="end" style=${{display:"flex", gap:12}}><button className="link-btn small" onClick=${()=>save(k)}>Gem som fil</button><button className="link-btn small neg" onClick=${()=>remove(k)}>Slet</button></div>
+      </div>`)}</div>`}
+      <${Msg} k="storage" />
+    </div>`;
+  };
+
   const DataPage = () => html`<div>
     <div className="card stack" style=${{marginBottom:12}}>
       <div style=${{fontWeight:600}}>Synkronisering mellem enheder</div>
@@ -3500,6 +3525,7 @@ function App() {
     <${Msg} k="backup" />
     <div className="small faint">${transactions.length} poster · ${holdings.length} beholdninger · ${assets.length} aktiver</div>
     </div>
+    ${StorageCard()}
   </div>`;
 
   const MorePage = () => {
