@@ -147,10 +147,10 @@ function guessCategory(desc) {
   if (/\bsu\b|su[- ]?styr|uddannelsesstøtte|statens uddann/.test(d)) return "SU";
   if (/husleje|\bleje\b|boligselskab|udlejning|huslejekonto/.test(d)) return "Husleje";
   if (/tryg|forsikr|topdanmark|\balka\b|codan|gjensidige|gf forsikr/.test(d)) return "Forsikring";
-  if (/openai|chatgpt|spotify|netflix|hbo|disney|viaplay|youtube|icloud|dr\.|tv\s?2|avis|blad|abonne|subscr/.test(d)) return "Abonnementer";
-  if (/rema|netto|fakta|aldi|lidl|meny|fotex|bilka|daglig|supermark|groceri|coop/.test(d)) return "Mad & dagligvarer";
-  if (/dsb|rejsekort|fly|tog|bus|metro|taxa|uber|parkering|benzin|shell|circle k|ok\s?tank/.test(d)) return "Transport";
-  if (/restaurant|cafe|café|pizza|sushi|mcdo|burger|takeaway|just eat|wolt/.test(d)) return "Restaurant & café";
+  if (/openai|chatgpt|spotify|netflix|hbo|disney|viaplay|youtube|icloud|apple\.com\/bill|itunes|dr\.|tv\s?2|avis|blad|abonne|subscr/.test(d)) return "Abonnementer";
+  if (/rema|netto|fakta|aldi|lidl|meny|fotex|føtex|bilka|daglig|supermark|groceri|coop|brugsen|kvickly|løvbjerg|loevbjerg|salling|\bspar\b|købmand|kobmand|7-eleven|kiosk|grønt|groent|bager|slagter|fiskehandl|lagkagehuset|nemlig|wolt/.test(d)) return "Mad & dagligvarer";
+  if (/dsb|rejsekort|fly|tog|bus|metro|taxa|uber|parkering|benzin|shell|circle k|ok\s?tank|kombardo|molslinjen|færge|faerge|flexii/.test(d)) return "Transport";
+  if (/restaurant|cafe|café|pizza|sushi|mcdo|burger|takeaway|just eat|shawarma|kebab|falafel|kanpla|kantine|compass group/.test(d)) return "Restaurant & café";
   if (/fitness|gym|\bsport|svøm|træn|apotek|læge|tandlæge|medicin/.test(d)) return "Sundhed & fitness";
   if (/2tall|h&m|zara|zalando|tøj|\bsko\b|mode|shopping|elgiganten|jysk|ikea|silvan|normal|guldsmed/.test(d)) return "Shopping";
   if (/bio|kino|koncert|teater|event|underholdning/.test(d)) return "Underholdning";
@@ -229,6 +229,7 @@ const subKey = (d) => (d || "").toLowerCase()
 
 // Readable merchant name from a bank text: drops MobilePay prefixes, addresses, note numbers and city suffixes.
 function prettyName(desc) {
+  if (/apple\.com\/bill|itunes/i.test(desc || "")) return "Apple";
   let n = (desc || "").replace(/^(mob\.?\s*pay\*|mobilepay:?\s*(mobilepay\s*)?|dankort-nota\s+|pbs\s+)/i, "");
   n = n.split(/\\|,|\s+Notanr\b|\s+beløb omregnet/i)[0].trim() || desc || "";
   if (n === n.toUpperCase()) n = n.toLowerCase().replace(/(^|[\s*\-])\p{L}/gu, (m) => m.toUpperCase());
@@ -248,6 +249,13 @@ function detectRecurring(transactions, sign, hidden = []) {
     if (k.length < 3) continue;
     (groups[k] ||= []).push(t);
   }
+  // One merchant can bill several subscriptions (Apple: "APPLE.COM/BILL, CORK" for iCloud, apps, …):
+  // when it charges more often than monthly, each recurring amount becomes its own subscription.
+  for (const [k, txs] of Object.entries(groups)) {
+    if (txs.length <= new Set(txs.map(t => t.date.slice(0, 7))).size * 1.5) continue;
+    delete groups[k];
+    for (const t of txs) (groups[`${k} ${Math.round(Math.abs(t.amount))}`] ||= []).push(t);
+  }
   const out = [];
   for (const [key, txs] of Object.entries(groups)) {
     if (hidden.includes(key)) continue;
@@ -257,10 +265,11 @@ function detectRecurring(transactions, sign, hidden = []) {
     if (months.size < (known ? 2 : 3) || txs.length > months.size * 1.5) continue;
     const amounts = txs.map(t => Math.abs(t.amount)).sort((a, b) => a - b);
     const median = amounts[Math.floor(amounts.length / 2)];
-    if (median < 10 || (amounts[amounts.length - 1] - amounts[0]) / median > 0.35) continue;
+    if (median < (known ? 5 : 10) || (amounts[amounts.length - 1] - amounts[0]) / median > 0.35) continue;
     const last = txs[txs.length - 1];
     if (last.date < stale) continue;
-    out.push({ key, name: prettyName(last.description), raw: last.description, category: last.category, monthly: Math.abs(last.amount), last: last.date, months: months.size });
+    const split = key !== subKey(last.description);
+    out.push({ key, name: prettyName(last.description) + (split ? ` (${Math.round(Math.abs(last.amount))} kr.)` : ""), raw: last.description, category: last.category, monthly: Math.abs(last.amount), last: last.date, months: months.size });
   }
   return out.sort((a, b) => b.monthly - a.monthly);
 }
@@ -691,6 +700,7 @@ function normalizeData(d) {
   if (d.rejse) out.rejse = {...DEFAULT_REJSE, ...d.rejse};
   if (Array.isArray(d.subsHidden)) out.subsHidden = d.subsHidden;
   if (d.subsShare && typeof d.subsShare === "object") out.subsShare = d.subsShare;
+  if (d.subsNames && typeof d.subsNames === "object") out.subsNames = d.subsNames;
   if (d.shop) out.shop = {...DEFAULT_SHOP, ...d.shop};
   if (Array.isArray(d.invHistory)) out.invHistory = d.invHistory;
   if (d.saxoLedger) out.saxoLedger = d.saxoLedger;
@@ -953,6 +963,8 @@ function App() {
   const [rent, setRent] = useState(init.rent || DEFAULT_RENT);
   const [subsHidden, setSubsHidden] = useState(init.subsHidden || []);
   const [subsShare, setSubsShare] = useState(init.subsShare || {});
+  const [subsNames, setSubsNames] = useState(init.subsNames || {}); // subKey -> the user's own name ("iCloud+")
+  const [renameSub, setRenameSub] = useState(null);
   const [shop, setShop] = useState(init.shop || DEFAULT_SHOP);
   const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
   const [shopDraft, setShopDraft] = useState("");
@@ -1048,6 +1060,7 @@ function App() {
     if (d.rent) setRent(d.rent);
     if (d.subsHidden) setSubsHidden(d.subsHidden);
     if (d.subsShare) setSubsShare(d.subsShare);
+    if (d.subsNames) setSubsNames(d.subsNames);
     if (d.shop) setShop(d.shop);
     if (d.invHistory) setInvHistory(d.invHistory);
     if (d.saxoLedger) setSaxoLedger(d.saxoLedger);
@@ -1055,9 +1068,9 @@ function App() {
   const loadData = () => applyData(readStored());
 
   useEffect(() => {
-    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop,saxoLedger}));
+    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,subsNames,invHistory,shop,saxoLedger}));
     setSaveError(!ok);
-  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, invHistory, shop, saxoLedger]);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, subsNames, invHistory, shop, saxoLedger]);
 
   useEffect(() => { navigator.storage?.persist?.().catch(()=>{}); }, []);
   useEffect(() => {
@@ -1143,8 +1156,22 @@ function App() {
     const pick = subsShare[x.key];
     const share = pick === "none" ? null : pick ? recurringIn.find(i => i.key === pick) || null : guessShare(x, recurringIn);
     const back = share ? Math.min(share.monthly, x.monthly) : 0;
-    return { ...x, share, net: x.monthly - back };
+    return { ...x, name: subsNames[x.key] || x.name, share, net: x.monthly - back };
   });
+  // Card purchases the guesser now recognises (new grocery chains, Apple, ferries …) leave "Andet" by
+  // themselves; a category the user picked is never touched.
+  useEffect(() => {
+    let n = 0;
+    const next = transactions.map(t => {
+      // Wolt counts as food (the user's choice), also for purchases already filed under Café.
+      const wolt = t.category === "Restaurant & café" && /wolt/i.test(t.description || "");
+      if ((t.category !== "Andet" && !wolt) || t.manualCategory) return t;
+      const g = guessCategory(t.description);
+      if (g === "Andet" || INCOME_CATS.includes(g) || (g === "Intern overførsel")) return t;
+      n++; return {...t, category: g};
+    });
+    if (n) setTransactions(next);
+  }, [transactions.length]);
   const subsMonthly = subscriptions.reduce((s, x) => s + x.net, 0);
 
   // Travel fund: the user and the sister each earmark `rejse.goal` (the user's part sits in savings).
@@ -1570,7 +1597,7 @@ function App() {
   // ---------- backup ----------
 
   const exportData = () => {
-    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,invHistory,shop,saxoLedger,exported:new Date().toISOString()};
+    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,subsNames,invHistory,shop,saxoLedger,exported:new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2102,13 +2129,17 @@ function App() {
       <div className="big"><${CountUp} value=${Math.round(subsMonthly)} /></div>
       <div className="hm">om måneden · ${fmt(subsMonthly * 12)} om året · ${subscriptions.length} stk.${gross > subsMonthly ? ` · ${fmt(gross)} før andres andel` : ""}</div>
     </div>
-    <div className="small muted" style=${{margin:"12px 2px"}}>Fundet ud fra poster, der kommer ca. én gang om måneden med næsten samme beløb. Får du fast penge tilbage fra andre, trækkes de fra. Husleje, opsparing og rejser er ikke med.</div>
+    <div className="small muted" style=${{margin:"12px 2px"}}>Fundet ud fra poster, der kommer ca. én gang om måneden med næsten samme beløb. Får du fast penge tilbage fra andre, trækkes de fra. Husleje, opsparing og rejser er ikke med.${subscriptions.some(x => /apple/i.test(x.raw || "")) ? " Apple trækker hvert abonnement for sig – se hvilke under Indstillinger → dit navn → Abonnementer på iPhone, og tryk Omdøb." : ""}</div>
     ${subscriptions.length === 0
       ? html`<div className="card empty">Ingen faste træk fundet endnu. Der skal være poster fra mindst 2–3 måneder.</div>`
       : html`<div className="list stagger">${subscriptions.map((x, i) => html`<div key=${x.key} className="row" style=${{...stag(i), alignItems:"flex-start", flexWrap:"wrap"}}>
           <${CatIcon} cat=${x.category} />
           <div className="main">
-            <div className="title">${x.name}</div>
+            ${renameSub === x.key
+              ? html`<form style=${{display:"flex", gap:6}} onSubmit=${e=>{ e.preventDefault(); const v = e.target.elements.n.value.trim(); setSubsNames(m => { const o = {...m}; if (v) o[x.key] = v; else delete o[x.key]; return o; }); setRenameSub(null); }}>
+                  <input name="n" className="input sm" style=${{flex:1}} defaultValue=${subsNames[x.key] || ""} placeholder="Fx iCloud+" aria-label="Navn på abonnementet" autoFocus />
+                  <button className="btn soft" type="submit">Gem</button></form>`
+              : html`<div className="title">${x.name} <button className="link-btn small" onClick=${()=>setRenameSub(x.key)}>Omdøb</button></div>`}
             <div className="sub">${x.share ? `${fmt(x.monthly)} − ${fmt(Math.min(x.share.monthly, x.monthly))} fra ${x.share.name}` : `${fmt(x.monthly * 12)} om året`} · sidst ${shortDate(x.last)}</div>
             ${recurringIn.length > 0 && html`<select className="input sm" style=${{marginTop:6, maxWidth:"100%"}} aria-label=${`Andre betaler med på ${x.name}`} value=${x.share?.key || "none"}
               onChange=${e=>setSubsShare({...subsShare, [x.key]: e.target.value})}>
@@ -2633,6 +2664,22 @@ function App() {
     const after = planTotal != null ? left - planTotal : null;
     const buys = transactions.filter(t => t.category === FOOD_CAT && !t.trip && t.amount < 0 && budgetMonth(t.date, t.amount, t.category) === ym)
       .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    // The month in weeks (Monday–Sunday, cut at the month's ends): what each week got, and what's left for
+    // the weeks after the current madplan. Offers are only known a week ahead, so later weeks get a budget
+    // rather than a plan.
+    const today = isoDate(new Date()), mEnd = monthEnd(ym), totalDays = +mEnd.slice(8);
+    const weeks = [];
+    for (let d = `${ym}-01`; d <= mEnd; ) {
+      const end = [addDays(d, 6 - (parseDKDate(d).getDay() + 6) % 7), mEnd].sort()[0];
+      const days = Math.round((parseDKDate(end) - parseDKDate(d)) / 864e5) + 1;
+      const spentW = -buys.filter(t => t.date >= d && t.date <= end).reduce((s, t) => s + t.amount, 0);
+      weeks.push({ from: d, to: end, days, spent: spentW, budget: budget * days / totalDays, state: end < today ? "past" : d > today ? "future" : "now" });
+      d = addDays(end, 1);
+    }
+    const daysLeft = today > mEnd ? 0 : Math.round((parseDKDate(mEnd) - parseDKDate(today)) / 864e5) + 1;
+    const planDays = planTotal != null ? Math.max(0, Math.min(daysLeft, Math.round((parseDKDate(addDays(shop.plan.created, shop.plan.nights)) - parseDKDate(today)) / 864e5))) : 0;
+    const restDays = daysLeft - planDays, perDayRest = restDays > 0 ? Math.max(0, (after ?? left)) / restDays : 0;
+    const weekNo = (iso) => { const t = parseDKDate(iso); t.setDate(t.getDate() + 3 - (t.getDay() + 6) % 7); const y1 = new Date(t.getFullYear(), 0, 4); return 1 + Math.round(((t - y1) / 864e5 - 3 + (y1.getDay() + 6) % 7) / 7); };
     return html`<div className="card stack" style=${{marginBottom:12}}>
       <div style=${{display:"flex", alignItems:"baseline", gap:8}}>
         <div style=${{flex:1}}>
@@ -2643,8 +2690,27 @@ function App() {
       </div>
       ${foodBudgetEdit && html`<label className="field">Budget til mad og dagligvarer pr. måned (kr.)<input className="input" type="number" inputMode="decimal" value=${budget} onChange=${e=>setBudgets({...budgets, [FOOD_CAT]: +e.target.value})} /></label>`}
       <div className="bar" style=${{height:8}}><div style=${{width:`${pct}%`, background: left < 0 ? "var(--neg)" : CAT_COLORS[FOOD_CAT]}}></div></div>
-      <div className="small muted">Brugt ${fmt(spent)} af ${fmt(budget)}${left > 0 && pay.days > 0 ? ` · ${fmt(left / pay.days)} pr. dag i ${pay.days} dage` : ""}</div>
+      <div className="small muted">Brugt ${fmt(spent)} af ${fmt(budget)}${left > 0 && daysLeft > 0 ? ` · ${fmt(left / daysLeft)} pr. dag i ${daysLeft} dage` : ""}</div>
       ${after != null && html`<div className=${"small " + (after < 0 ? "neg" : "")}>Madplanen koster ca. ${fmt(Math.round(planTotal))} – ${after < 0 ? html`<b>${fmt(-after)} mere end du har tilbage</b>` : html`så har du ca. <b>${fmt(after)}</b> tilbage`}.</div>`}
+      ${budget > 0 && daysLeft > 0 && html`<div className="small">${planTotal != null && planDays > 0
+        ? html`Madplanen dækker <b>${planDays} af ${daysLeft} dage</b> tilbage (ca. ${fmt(Math.round(planTotal / Math.max(1, shop.plan.nights)))} pr. aften). `
+        : ""}${restDays > 0 ? html`Til ${planTotal != null && planDays > 0 ? "de sidste" : "de"} ${restDays} dage har du ca. <b>${fmt(perDayRest)} pr. dag</b> – ca. ${fmt(perDayRest * 7)} pr. uge til madplaner, morgenmad og frokost.` : ""}</div>`}
+      ${budget > 0 && html`<div className="stack" style=${{gap:7, marginTop:2}}>${weeks.map(w => {
+        const planHere = w.state === "now" && planTotal != null ? planTotal : 0;
+        const over = w.spent + planHere > w.budget;
+        const avail = w.state === "future" ? perDayRest * w.days : null;
+        return html`<div key=${w.from} style=${{opacity: w.state === "past" ? .7 : 1}}>
+          <div style=${{display:"flex", justifyContent:"space-between", gap:8}} className="small">
+            <span><b>Uge ${weekNo(w.from)}</b> <span className="muted">${shortDate(w.from)}${w.from !== w.to ? `–${shortDate(w.to)}` : ""}${w.state === "now" ? " · nu" : ""}</span></span>
+            <span className=${"num " + (over && w.state !== "future" ? "neg" : "muted")}>${w.state === "future"
+              ? `ca. ${fmt(avail)} til rådighed`
+              : `${fmt(w.spent)}${planHere ? ` + plan ${fmt(Math.round(planHere))}` : ""} af ${fmt(w.budget)}`}</span>
+          </div>
+          <div className="bar" style=${{height:5, marginTop:4, display:"flex"}}>
+            <div style=${{width:`${Math.min(100, w.spent / Math.max(1, w.budget) * 100)}%`, background: over ? "var(--neg)" : CAT_COLORS[FOOD_CAT]}}></div>
+            ${planHere > 0 && html`<div style=${{width:`${Math.max(0, Math.min(100 - w.spent / Math.max(1, w.budget) * 100, planHere / Math.max(1, w.budget) * 100))}%`, background: CAT_COLORS[FOOD_CAT], opacity:.4}}></div>`}
+          </div>
+        </div>`; })}</div>`}
       ${buys.length > 0 && html`<button className="link-btn small" style=${{alignSelf:"flex-start"}} onClick=${()=>setShowFoodTx(!showFoodTx)}>${showFoodTx ? "Skjul køb" : `Se ${buys.length} køb i ${monthName(ym).toLowerCase()}`}</button>`}
       ${showFoodTx && html`<div className="list">${buys.map(t => html`<div key=${t.id} className="row" style=${{minHeight:44}}>
         <div className="main"><div className="title">${prettyName(t.description)}</div><div className="sub">${shortDate(t.date)}</div></div>
