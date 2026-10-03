@@ -7,7 +7,7 @@ import { INCOME_CATS, CATEGORIES, CAT_COLORS, SHORT_CAT, EXCLUDED, RENT_TEXT, gu
 import { DEFAULT_TRAINING, LIFTS, sessionFor, weekProgress, weekStreak, e1rm, parseWorkoutCsv, liftSummary } from "./lib/training.js";
 import { AWAY_WORDS, NOT_AWAY, calendarAway, icsEsc, icsDate, buildIcs } from "./lib/calendar.js";
 import { te, td, syncCryptoKey, gz, sealData, openData, deviceName } from "./lib/sync.js";
-import { TJEK_SEARCH, CHAINS, AARHUS, STAPLES, DEFAULT_SHOP, kr, chainOf, usualStores, searchOffers, MEAL_TEMPLATES, INGREDIENT_GROUPS, MEAL_STEPS, MEAL_SOURCE, VALDEMARSRO, VR_URL, VR_TAGS, MEAL_EXTRAS, OFFER_EXCLUDE, OFFER_ALIASES, OFFER_EXCLUDE_ALL, offerFits, NORMAL_PRICES, normalPrice, MEAL_AMOUNTS, ING, EXTRA_ING, REMA_DATA, PIECE_G, UNITS, UNIT_G, toGrams, mealServings, mealAmounts, perPortion, mealMacros, mealProtein, nice, fmtAmount, BASICS, KNOWN_TERMS, LINE_UNITS, SKIP_LINES, parseIngredientLine, mealFromRecipe, covers, AISLES, aisleOf, packsFor, planCost, planWeek } from "./lib/food.js";
+import { TJEK_SEARCH, CHAINS, AARHUS, STAPLES, DEFAULT_SHOP, kr, chainOf, usualStores, searchOffers, MEAL_TEMPLATES, INGREDIENT_GROUPS, MEAL_STEPS, MEAL_SOURCE, VALDEMARSRO, VR_URL, VR_TAGS, MEAL_EXTRAS, OFFER_EXCLUDE, OFFER_ALIASES, OFFER_EXCLUDE_ALL, offerFits, NORMAL_PRICES, normalPrice, MEAL_AMOUNTS, ING, EXTRA_ING, REMA_DATA, PIECE_G, UNITS, UNIT_G, toGrams, mealServings, mealAmounts, perPortion, mealMacros, mealProtein, nice, fmtAmount, BASICS, KNOWN_TERMS, LINE_UNITS, SKIP_LINES, parseIngredientLine, mealFromRecipe, covers, AISLES, aisleOf, packsFor, portionCost, planCost, planWeek } from "./lib/food.js";
 
 const html = htm.bind(React.createElement);
 
@@ -471,13 +471,21 @@ function App() {
   const [planBusy, setPlanBusy] = useState(false);
   const [stapleDraft, setStapleDraft] = useState("");
   const [pickMeal, setPickMeal] = useState(null);
+  const [openMeal, setOpenMeal] = useState(null);      // plan meal shown with ingredients and actions
+  const [showBuy, setShowBuy] = useState(false);       // the plan's shopping, item by item
+  const [planSetup, setPlanSetup] = useState(false);
+  const [foodBudgetOpen, setFoodBudgetOpen] = useState(() => store.get("food_budget_open") === "1");   // madplan settings (shown when there's no plan)
   const [ingFor, setIngFor] = useState(null);   // name of the meal whose ingredient picker is open (a starter meal gets an id only once edited)
   const [ingSearch, setIngSearch] = useState(""); // index of the plan meal whose "Vælg selv" list is open
   const [foodBudgetEdit, setFoodBudgetEdit] = useState(false);
   const [showFoodTx, setShowFoodTx] = useState(false);
   const [doneFor, setDoneFor] = useState(null);        // index of the plan meal whose "Lavet" panel is open
   const [doneDraft, setDoneDraft] = useState({ rate: 0, note: "", freeze: 0 });
-  const [openRecipe, setOpenRecipe] = useState(null);  // name of the meal whose amounts are open
+  const [openRecipe, setOpenRecipe] = useState(null);
+  const [mealQ, setMealQ] = useState("");
+  const [mealFilter, setMealFilter] = useState("alle");
+  const [mealOpen, setMealOpen] = useState(null);      // name of the meal card opened under Retter
+  const [addOpen, setAddOpen] = useState(false);       // "+ Ny ret": link, Valdemarsro and your own  // name of the meal whose amounts are open
   const [viewServings, setViewServings] = useState({});
   const [importUrl, setImportUrl] = useState("");
   const [importBusy, setImportBusy] = useState(null);
@@ -2699,8 +2707,9 @@ function App() {
       return runs.map(([a, b]) => a === b ? day(a) : `${day(a)}–${day(b)}`).join(", ");
     };
     const old = plan && !plan.buy; // a plan made before amounts and packs
+    const ready = plan && !old;
     const shopping = {};
-    if (plan && !old) for (const b of plan.buy) (shopping[b.offer ? b.offer.store : "Normalpris"] ||= []).push(b);
+    if (ready) for (const b of plan.buy) (shopping[b.offer ? b.offer.store : "Normalpris"] ||= []).push(b);
     const addToList = () => {
       const have = new Set(shop.items.map(i => i.name.toLowerCase()));
       const add = plan.buy.filter(b => !have.has(b.term.toLowerCase())).map(b => ({
@@ -2712,9 +2721,125 @@ function App() {
       flash("plan", add.length ? `${add.length} varer lagt på indkøbslisten.` : "Alle varerne står allerede på listen.");
     };
     // What the card actually paid for food since the plan was made, against what the plan expected.
-    const bought = plan && !old ? transactions.filter(t => t.category === FOOD_CAT && !t.trip && t.amount < 0 && t.date >= plan.created && t.date <= addDays(plan.created, plan.nights)) : [];
+    const bought = ready ? transactions.filter(t => t.category === FOOD_CAT && !t.trip && t.amount < 0 && t.date >= plan.created && t.date <= addDays(plan.created, plan.nights)) : [];
     const spent = -bought.reduce((s, t) => s + t.amount, 0);
     const chip = (it, portions) => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border: `1px ${it.have || it.staple ? "dashed" : "solid"} var(--border)`}}>${it.term}${amountOf(it, portions) ? ` ${amountOf(it, portions)}` : ""}${it.staple ? " · fast vare" : it.have ? " · har" : it.offer ? " · tilbud" : ""}</span>`;
+    const recOf = (m) => allMeals.find(x => x.name === m.name);
+    const facts = (m) => {
+      const rec = recOf(m), p = m.macros?.p ?? m.protein, min = rec?.minutes || MEAL_STEPS[m.name]?.[0];
+      return [p != null && `${p} g protein`, (c => c > 0 ? `ca. ${kr(c)}/port.` : m.carried ? "allerede købt" : null)(portionCost(m)), min && `${min} min`].filter(Boolean).join(" · ");
+    };
+    const canCook = (m) => { const rec = recOf(m); return rec?.url || m.url || MEAL_STEPS[m.name]; };
+    const cook = (m) => { const rec = recOf(m); openCook(rec || { name: m.name, url: m.url, ingredients: m.items.map(x => x.term) }, m.portions); };
+    const openDone = (i, m) => { setDoneFor(doneFor === i ? null : i); setOpenMeal(i); setDoneDraft({ rate: 0, note: "", freeze: Math.max(0, m.portions - plan.cookDays * (plan.perNight || 1)) }); };
+
+    // The meal for tonight (or the next one, when tonight is an evening out).
+    const nowIdx = ready && !planEnded ? plan.meals.findIndex((m, i) => mealState(i) === "now" && !m.done) : -1;
+    const nextIdx = ready && !planEnded ? plan.meals.findIndex((m, i) => mealState(i) === "future" && !m.done) : -1;
+    const awayTonight = awayFor(isoDate(new Date()));
+    const Tonight = () => {
+      const i = nowIdx >= 0 ? nowIdx : nextIdx;
+      if (i < 0 && !awayTonight.away) return null;
+      const m = i >= 0 ? plan.meals[i] : null, rec = m && recOf(m), img = rec?.image;
+      return html`<div className="tonight">
+        ${img && html`<img className="tonight-img" src=${img} alt="" loading="lazy" />`}
+        <div className="tonight-body">
+          <div className="label">${awayTonight.away ? `I aften laver du ikke mad${awayTonight.reason && awayTonight.reason !== "markeret" ? ` · ${awayTonight.reason}` : ""}` : nowIdx >= 0 ? "I aften" : `Næste · ${span(i)}`}</div>
+          ${m && html`<div className="tonight-name">${m.fav ? "♥ " : ""}${m.name}</div>
+            <div className="small muted">${facts(m)} · ${m.portions} port.</div>
+            ${(() => { const n = rec?.notes?.[rec.notes.length - 1]; return n && html`<div className="small" style=${{marginTop:6}}>📝 ${n.text}</div>`; })()}
+            <div className="btns" style=${{marginTop:12}}>
+              ${canCook(m) && html`<button className="btn primary" onClick=${()=>cook(m)}>Se opskrift</button>`}
+              <button className="btn soft" onClick=${()=>openDone(i, m)}>Lavet ✓</button>
+              ${plan.alts?.length > 0 && html`<button className="btn" onClick=${()=>replaceMeal(i)}>Byt</button>`}
+            </div>`}
+        </div>
+      </div>`;
+    };
+
+    const MealCard = (m, i) => {
+      const st = mealState(i), open = openMeal === i, rec = recOf(m), lastNote = rec?.notes?.[rec.notes.length - 1];
+      const dim = m.done || st === "past";
+      return html`<div key=${i} className=${"meal-card" + (open ? " open" : "") + (dim ? " dim" : "")}>
+        <button className="meal-head" aria-expanded=${open} onClick=${()=>setOpenMeal(open ? null : i)}>
+          <div className="meal-day">${span(i)}${st === "now" && !planEnded ? html`<span className="chip info">I dag</span>` : null}</div>
+          <div className="grow">
+            <div className="title">${m.done ? "✓ " : m.fav ? "♥ " : ""}${m.name}</div>
+            <div className="sub">${m.carried ? "Fra sidste plan · " : ""}${facts(m)}${m.done ? ` · lavet${m.rate > 0 ? " 👍" : m.rate < 0 ? " 👎" : ""}` : ""}</div>
+          </div>
+          <span className="meal-chev">${open ? "−" : "+"}</span>
+        </button>
+        ${open && html`<div className="meal-body">
+          ${macroLine(m.macros)}
+          ${lastNote && html`<div className="small" style=${{marginTop:4}}>📝 Næste gang: ${lastNote.text}</div>`}
+          <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:8}}>${m.items.map(it => chip(it, m.portions))}</div>
+          ${!m.done && html`<div className="meal-actions">
+            ${canCook(m) && html`<button className="btn soft" onClick=${()=>cook(m)}>Se opskrift</button>`}
+            <button className="btn soft" aria-expanded=${doneFor === i} onClick=${()=>openDone(i, m)}>${doneFor === i ? "Luk" : "Lavet ✓"}</button>
+            <span className="por">
+              <button className="icon-btn" aria-label="Færre portioner" disabled=${m.portions <= 1} onClick=${()=>setPortions(i, m.portions - 1)}>−</button>
+              <span className="small num">${m.portions} port.</span>
+              <button className="icon-btn" aria-label="Flere portioner" disabled=${m.portions >= 16} onClick=${()=>setPortions(i, m.portions + 1)}>+</button>
+            </span>
+          </div>
+          ${plan.alts?.length > 0 && html`<div className="meal-links">
+            <button className="link-btn small" onClick=${()=>replaceMeal(i)}>Byt</button>
+            <button className="link-btn small" onClick=${()=>randomMeal(i)}>Tilfældig</button>
+            <button className="link-btn small" aria-expanded=${pickMeal === i} onClick=${()=>setPickMeal(pickMeal === i ? null : i)}>${pickMeal === i ? "Luk listen" : "Vælg selv"}</button>
+          </div>`}`}
+          ${doneFor === i && html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
+            <div className="small">Hvordan var den?</div>
+            <div style=${{display:"flex", gap:8}}>
+              <button className=${"chip " + (doneDraft.rate > 0 ? "pos" : "")} style=${doneDraft.rate > 0 ? {} : {border:"1px solid var(--border)"}} aria-pressed=${doneDraft.rate > 0} onClick=${()=>setDoneDraft({...doneDraft, rate: doneDraft.rate > 0 ? 0 : 1})}>👍 Lav den igen</button>
+              <button className=${"chip " + (doneDraft.rate < 0 ? "neg" : "")} style=${doneDraft.rate < 0 ? {} : {border:"1px solid var(--border)"}} aria-pressed=${doneDraft.rate < 0} onClick=${()=>setDoneDraft({...doneDraft, rate: doneDraft.rate < 0 ? 0 : -1})}>👎 Sjældnere</button>
+            </div>
+            <input className="input sm" value=${doneDraft.note} onChange=${e=>setDoneDraft({...doneDraft, note: e.target.value})} placeholder="Næste gang: fx mere chili, dobbelt op på kylling" aria-label="Note til næste gang" />
+            ${stepper("Portioner i fryseren", doneDraft.freeze, 0, m.portions, v => setDoneDraft({...doneDraft, freeze: v}))}
+            ${m.items.some(x => x.fresh) && html`<div className="small faint">${m.items.filter(x => x.fresh).map(x => x.term).join(", ")} fjernes fra "Har lige nu".</div>`}
+            <button className="btn primary" onClick=${()=>finishMeal(i)}>Gem</button>
+          </div>`}
+          ${pickMeal === i && html`<div className="list" style=${{marginTop:8}}>${plan.alts
+            .map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length }))
+            .sort((x, y) => (y.a.fav - x.a.fav) || x.a.name.localeCompare(y.a.name, "da"))
+            .map(({ a, k, hits }) => html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:44}} onClick=${()=>replaceMeal(i, k)}>
+              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div>${a.protein != null && html`<div className="sub">${a.protein} g protein</div>`}</div>
+              <div className=${"end small " + (hits ? "pos" : "muted")}>${hits}/${a.items.length} på tilbud</div>
+            </button>`)}</div>`}
+        </div>`}
+      </div>`;
+    };
+
+    const Setup = () => html`<div className="card stack" style=${{marginTop:10}}>
+      ${stepper("Aftener", nights, 1, 14, v => setShop(s => ({...s, days: v})))}
+      ${stepper("Dage pr. ret", cookDays, 1, 5, v => setShop(s => ({...s, cookDays: v})))}
+      ${stepper("Portioner pr. aften", perNight, 1, 6, v => setShop(s => ({...s, perNight: v})))}
+      <div className="small faint">Hver ret laves til ${cookDays * perNight} ${cookDays * perNight === 1 ? "portion" : "portioner"}.${freezerTotal > 0 && shop.useFreezer !== false ? ` ${freezerTotal} ${freezerTotal === 1 ? "portion" : "portioner"} fra fryseren bruges først.` : ""}</div>
+      <label style=${{display:"flex", alignItems:"center", gap:10}} className="small">
+        <input type="checkbox" style=${{width:20, height:20, accentColor:"var(--accent)"}} checked=${shop.preferProtein !== false} onChange=${e=>setShop(s => ({...s, preferProtein: e.target.checked}))} />
+        Vælg helst proteinrige retter
+      </label>
+      <label style=${{display:"flex", alignItems:"center", gap:10}} className="small">
+        <span style=${{flex:1}}>Dagligt proteinmål</span>
+        <input className="input sm" style=${{width:80, textAlign:"right"}} type="number" inputMode="numeric" value=${prefs.proteinGoal ?? ""} placeholder="fx 150" onChange=${e=>setPrefs(pr => ({ ...pr, proteinGoal: e.target.value }))} aria-label="Dagligt proteinmål i gram" /> g
+      </label>
+      <div>
+        <div className="small" style=${{marginBottom:6}}>Faste varer hver uge</div>
+        <div style=${{display:"flex", flexWrap:"wrap", gap:6, alignItems:"center"}}>
+          ${staples.map(t => html`<button key=${t} className="chip info" aria-label=${`Fjern ${t} fra faste varer`} onClick=${()=>setShop(s => ({...s, staples: staples.filter(x => x !== t)}))}>${t} ✕</button>`)}
+          <form style=${{display:"flex", gap:6}} onSubmit=${e=>{ e.preventDefault(); const t = stapleDraft.trim().toLowerCase(); if (t && !staples.includes(t)) setShop(s => ({...s, staples: [...staples, t], offerCheck: null})); setStapleDraft(""); }}>
+            <input className="input sm" style=${{width:130}} value=${stapleDraft} onChange=${e=>setStapleDraft(e.target.value)} placeholder="+ fx skyr" aria-label="Tilføj fast vare" />
+          </form>
+        </div>
+      </div>
+      ${(shop.rejected || []).length > 0 && html`<div className="small faint">${shop.rejected.length} tilbud er fravalgt. <button className="link-btn small" onClick=${()=>setShop(s => ({...s, rejected: []}))}>Nulstil</button></div>`}
+      <div className="small faint">Retterne vælges ud fra ugens tilbud. Dine ♥-retter og dem, du har givet 👍, kommer oftere med, og det, du har hjemme, bruges først.</div>
+      ${StoresBlock()}
+    </div>`;
+
+    const days = [...Array(Math.max(7, nights)).keys()].map(k => addDays(isoDate(new Date()), k));
+    const goal = +prefs.proteinGoal || 0, ps = ready ? plan.meals.map(m => m.macros?.p ?? m.protein).filter(x => x > 0) : [];
+    const avgP = ps.length ? Math.round(ps.reduce((a, b) => a + b, 0) / ps.length) : null;
+
     return html`<div>
       ${planEnded && (() => {
         const lastDay = WEEKDAYS[parseDKDate(addDays(plan.created, planLen - 1)).getDay()].toLowerCase();
@@ -2731,118 +2856,51 @@ function App() {
       ${newOffers && !planEnded && html`<div className="tip tap" style=${{marginTop:0, marginBottom:12}} onClick=${makePlan}>
         <div className="sq sm" style=${{background:"var(--info-bg, var(--pos-bg))", color:"var(--info, var(--pos))"}}><${Icon} name="cart" /></div>
         <div>Der er kommet <b>nye tilbudsaviser</b> siden din madplan. Tryk her for at lave en ny.</div></div>`}
-      <div className="card stack">
-        <div className="small muted">Aftensmad ud fra ugens tilbud. Dine ♥-retter og dem, du har givet 👍, vælges oftere. Det, du har hjemme, bruges først.</div>
-        ${stepper("Aftener", nights, 1, 14, v => setShop(s => ({...s, days: v})))}
-        ${stepper("Dage pr. ret", cookDays, 1, 5, v => setShop(s => ({...s, cookDays: v})))}
-        ${stepper("Portioner pr. aften", perNight, 1, 6, v => setShop(s => ({...s, perNight: v})))}
-        <div>
-          <div className="small" style=${{marginBottom:6}}>Laver du mad? <span className="faint">Tryk på en dag, hvor du ikke laver mad</span></div>
-          <div className="day-chips">${[...Array(Math.max(7, nights)).keys()].map(k => { const date = addDays(isoDate(new Date()), k), a = awayFor(date), d = parseDKDate(date);
-            return html`<button key=${date} className=${"day-chip " + (a.away ? "away" : "")} aria-pressed=${!a.away} title=${a.reason || ""} onClick=${()=>toggleAway(date)}>
-              <b>${k === 0 ? "I dag" : k === 1 ? "I morgen" : WEEKDAYS[d.getDay()].slice(0, 3)}</b><span>${d.getDate()}/${d.getMonth() + 1}</span><i>${a.away ? (a.own ? "ude" : "📅 ude") : "🍽"}</i></button>`; })}</div>
-          ${(() => { const out = [...Array(Math.max(7, nights)).keys()].map(k => addDays(isoDate(new Date()), k)).map(d => [d, awayFor(d)]).filter(([, a]) => a.away && a.reason && !a.own);
-            return out.length > 0 && html`<div className="small faint" style=${{marginTop:6}}>Fra kalenderen: ${out.map(([d, a]) => `${WEEKDAYS[parseDKDate(d).getDay()].slice(0, 3).toLowerCase()} (${a.reason})`).join(", ")}.</div>`; })()}
-          ${!prefs.calUrl && html`<div className="small faint" style=${{marginTop:6}}><button className="link-btn small" onClick=${()=>{ setPage("more"); setSub("calendar"); scrollToTop(); }}>Forbind din kalender</button>, så finder appen selv dage, hvor du ikke er hjemme.</div>`}
-        </div>
-        <div className="small faint">Hver ret laves til ${cookDays * perNight} ${cookDays * perNight === 1 ? "portion" : "portioner"}.${freezerTotal > 0 && shop.useFreezer !== false ? ` ${freezerTotal} ${freezerTotal === 1 ? "portion" : "portioner"} fra fryseren bruges først.` : ""}</div>
-        <label style=${{display:"flex", alignItems:"center", gap:10}} className="small">
-          <input type="checkbox" style=${{width:20, height:20, accentColor:"var(--accent)"}} checked=${shop.preferProtein !== false} onChange=${e=>setShop(s => ({...s, preferProtein: e.target.checked}))} />
-          Vælg helst proteinrige retter
-        </label>
-        <label style=${{display:"flex", alignItems:"center", gap:10}} className="small">
-          <span style=${{flex:1}}>Dagligt proteinmål</span>
-          <input className="input sm" style=${{width:80, textAlign:"right"}} type="number" inputMode="numeric" value=${prefs.proteinGoal ?? ""} placeholder="fx 150" onChange=${e=>setPrefs(pr => ({ ...pr, proteinGoal: e.target.value }))} aria-label="Dagligt proteinmål i gram" /> g
-        </label>
-        <div>
-          <div className="small" style=${{marginBottom:6}}>Faste varer hver uge</div>
-          <div style=${{display:"flex", flexWrap:"wrap", gap:6, alignItems:"center"}}>
-            ${staples.map(t => html`<button key=${t} className="chip info" aria-label=${`Fjern ${t} fra faste varer`} onClick=${()=>setShop(s => ({...s, staples: staples.filter(x => x !== t)}))}>${t} ✕</button>`)}
-            <form style=${{display:"flex", gap:6}} onSubmit=${e=>{ e.preventDefault(); const t = stapleDraft.trim().toLowerCase(); if (t && !staples.includes(t)) setShop(s => ({...s, staples: [...staples, t], offerCheck: null})); setStapleDraft(""); }}>
-              <input className="input sm" style=${{width:130}} value=${stapleDraft} onChange=${e=>setStapleDraft(e.target.value)} placeholder="+ fx skyr" aria-label="Tilføj fast vare" />
-            </form>
-          </div>
-        </div>
-        ${(shop.rejected || []).length > 0 && html`<div className="small faint">${shop.rejected.length} tilbud er fravalgt. <button className="link-btn small" onClick=${()=>setShop(s => ({...s, rejected: []}))}>Nulstil</button></div>`}
-        <button className="btn primary block" disabled=${planBusy || !mealPool.length} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : plan ? "Lav ny madplan" : "Lav madplan"}</button>
+
+      ${ready && !planEnded && Tonight()}
+
+      <div className="section" style=${{marginTop: ready && !planEnded ? 16 : 0}}>
+        <div className="section-head"><h2>Hvornår laver du mad?</h2><span className="small faint">tryk for at skifte</span></div>
+        <div className="day-chips">${days.map((date, k) => { const a = awayFor(date), d = parseDKDate(date);
+          return html`<button key=${date} className=${"day-chip " + (a.away ? "away" : "")} aria-pressed=${!a.away} title=${a.reason || ""} onClick=${()=>toggleAway(date)}>
+            <b>${k === 0 ? "I dag" : k === 1 ? "I morgen" : WEEKDAYS[d.getDay()].slice(0, 3)}</b><span>${d.getDate()}/${d.getMonth() + 1}</span><i>${a.away ? (a.own ? "ude" : "📅 ude") : "🍽"}</i></button>`; })}</div>
+        ${(() => { const out = days.map(d => [d, awayFor(d)]).filter(([, a]) => a.away && a.reason && !a.own);
+          return out.length > 0 && html`<div className="small faint" style=${{marginTop:6}}>Fra kalenderen: ${out.map(([d, a]) => `${WEEKDAYS[parseDKDate(d).getDay()].slice(0, 3).toLowerCase()} (${a.reason})`).join(", ")}.</div>`; })()}
       </div>
 
-      ${plan && !old && html`<div>
-        <div className="tip" style=${{marginTop:12}}>
-          <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div>
-          <div>${plan.meals.length ? html`Gå i <b>${plan.stores.join(" og ")}</b>. Indkøbet koster ca. <b>${kr(Math.round(plan.total))}</b>${plan.normal > plan.total ? html` – du sparer ca. <b className="pos">${kr(Math.round(plan.normal - plan.total))}</b> mod normalpris` : ""}` : "Fryseren rækker til alle aftenerne – du skal ikke købe ind til aftensmad."}</div>
-        </div>
-        ${(() => { const goal = +prefs.proteinGoal || 0, ps = plan.meals.map(m => m.macros?.p ?? m.protein).filter(x => x > 0);
-          if (!goal || !ps.length) return null;
-          const avg = Math.round(ps.reduce((a, b) => a + b, 0) / ps.length), rest = Math.max(0, goal - avg), pct = Math.min(100, avg / goal * 100);
-          return html`<div className="card stack" style=${{marginTop:8, gap:8}}>
-            <div style=${{display:"flex", justifyContent:"space-between", gap:10}} className="small"><span>Aftensmaden giver i snit <b>${avg} g protein</b> om dagen</span><span className="muted">mål ${goal} g</span></div>
-            <div className="bar" style=${{height:8}}><div style=${{width:`${pct}%`, background:"var(--accent)"}}></div></div>
-            <div className="small muted">${rest > 0 ? html`Du mangler ca. <b>${rest} g</b> fra morgenmad, frokost og mellemmåltider – fx 250 g skyr (25 g), 100 g kyllingepålæg (23 g), 3 æg (19 g) eller 100 g hytteost (13 g).` : "Aftensmaden dækker hele dit mål. 💪"}</div>
-          </div>`; })()}
-        ${bought.length > 0 && html`<div className="small" style=${{margin:"8px 2px 0"}}>Siden ${shortDate(plan.created)} har du købt mad for <b className=${spent > plan.total * 1.15 ? "neg" : ""}>${fmt(spent)}</b> (${bought.length} køb) – planen regnede med ca. ${fmt(Math.round(plan.total))}</div>`}
-        ${plan.swapped && html`<div className="small faint" style=${{margin:"8px 2px 0"}}>Du har ændret planen. Tryk <b>Lav ny madplan</b> for at sammenligne butikkerne igen.</div>`}
-        ${plan.compare?.length > 1 && !plan.swapped && html`<div className="card" style=${{marginTop:8}}>
-          <div className="small muted" style=${{marginBottom:6}}>Hele indkøbet inkl. varer til normalpris</div>
-          <div className="stack" style=${{gap:4}}>${plan.compare.map((c, i) => html`<div key=${i} style=${{display:"flex", justifyContent:"space-between", gap:12, fontWeight: i === 0 ? 600 : 400}}>
-            <span>${i === 0 ? "✓ " : ""}${c.stores.join(" + ")}</span><span className="num">ca. ${kr(Math.round(c.total))}</span></div>`)}</div>
+      ${ready && html`<div className="section">
+        <div className="section-head"><h2>Ugens retter</h2><span className="small faint">lavet ${shortDate(plan.created)}</span></div>
+        <div className="stack" style=${{gap:8}}>${plan.meals.map(MealCard)}</div>
+        ${(plan.staples?.length > 0 || plan.freezer?.length > 0) && html`<div className="small muted" style=${{margin:"10px 4px 0"}}>
+          ${plan.freezer?.length > 0 && html`<div>🧊 Fra fryseren: ${plan.freezer.map(f => `${f.portions}× ${f.name}`).join(", ")}</div>`}
+          ${plan.staples?.length > 0 && html`<div>Faste varer: ${plan.staples.map(it => `${it.term} (${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`})`).join(", ")}</div>`}
         </div>`}
+      </div>
 
-        <div className="section">
-          <div className="section-head"><h2>Madplan</h2><span className="small faint">lavet ${shortDate(plan.created)}</span></div>
-          <div className="list">${plan.staples?.length > 0 && html`<div className="row" style=${{alignItems:"flex-start"}}>
-            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>Fast</div>
-            <div className="main"><div style=${{display:"flex", flexWrap:"wrap", gap:4}}>${plan.staples.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div></div>
-          </div>`}${plan.meals.map((m, i) => {
-            const rec = allMeals.find(x => x.name === m.name), lastNote = rec?.notes?.[rec.notes.length - 1];
-            const st = mealState(i);
-            return html`<div key=${i} className="row" style=${{alignItems:"flex-start", opacity: m.done || st === "past" ? .55 : 1}}>
-            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}${st === "now" && !planEnded ? html`<div><span className="chip info" style=${{fontSize:11, padding:"1px 8px", marginTop:4, display:"inline-block"}}>I dag</span></div>` : null}</div>
-            <div className="main">
-              <div className="title" style=${{whiteSpace:"normal"}}>${m.done ? "✓ " : m.fav ? "♥ " : ""}${m.name}${proteinChip(m.protein)}</div>
-              ${macroLine(m.macros)}
-              <div className="small muted" style=${{marginTop:2}}>${m.carried ? "Fra sidste plan · " : ""}${m.portions} portioner${m.done ? ` · lavet${m.rate > 0 ? " 👍" : m.rate < 0 ? " 👎" : ""}` : ""}</div>
-              ${lastNote && html`<div className="small" style=${{marginTop:4}}>📝 Næste gang: ${lastNote.text}</div>`}
-              <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => chip(it, m.portions))}</div>
-              ${!m.done && html`<div style=${{display:"flex", flexWrap:"wrap", gap:14, marginTop:6, alignItems:"center"}}>
-                ${plan.alts?.length > 0 && html`<button className="link-btn small" onClick=${()=>replaceMeal(i)}>Byt</button>
-                <button className="link-btn small" onClick=${()=>randomMeal(i)}>Tilfældig</button>
-                <button className="link-btn small" aria-expanded=${pickMeal === i} onClick=${()=>setPickMeal(pickMeal === i ? null : i)}>${pickMeal === i ? "Luk" : "Vælg selv"}</button>`}
-                <span style=${{display:"inline-flex", alignItems:"center", gap:4}}>
-                  <button className="icon-btn" style=${{width:30, height:30}} aria-label="Færre portioner" disabled=${m.portions <= 1} onClick=${()=>setPortions(i, m.portions - 1)}>−</button>
-                  <span className="small num">${m.portions} port.</span>
-                  <button className="icon-btn" style=${{width:30, height:30}} aria-label="Flere portioner" disabled=${m.portions >= 16} onClick=${()=>setPortions(i, m.portions + 1)}>+</button>
-                </span>
-                ${(rec?.url || m.url || MEAL_STEPS[m.name]) && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(rec || { name: m.name, url: m.url, ingredients: m.items.map(x => x.term) }, m.portions)}>Se opskrift</button>`}
-                <button className="link-btn small" aria-expanded=${doneFor === i} onClick=${()=>{ setDoneFor(doneFor === i ? null : i); setDoneDraft({ rate: 0, note: "", freeze: Math.max(0, m.portions - plan.cookDays * (plan.perNight || 1)) }); }}>${doneFor === i ? "Luk" : "Lavet ✓"}</button>
-              </div>`}
-              ${doneFor === i && html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
-                <div className="small">Hvordan var den?</div>
-                <div style=${{display:"flex", gap:8}}>
-                  <button className=${"chip " + (doneDraft.rate > 0 ? "pos" : "")} style=${doneDraft.rate > 0 ? {} : {border:"1px solid var(--border)"}} aria-pressed=${doneDraft.rate > 0} onClick=${()=>setDoneDraft({...doneDraft, rate: doneDraft.rate > 0 ? 0 : 1})}>👍 Lav den igen</button>
-                  <button className=${"chip " + (doneDraft.rate < 0 ? "neg" : "")} style=${doneDraft.rate < 0 ? {} : {border:"1px solid var(--border)"}} aria-pressed=${doneDraft.rate < 0} onClick=${()=>setDoneDraft({...doneDraft, rate: doneDraft.rate < 0 ? 0 : -1})}>👎 Sjældnere</button>
-                </div>
-                <input className="input sm" value=${doneDraft.note} onChange=${e=>setDoneDraft({...doneDraft, note: e.target.value})} placeholder="Næste gang: fx mere chili, dobbelt op på kylling" aria-label="Note til næste gang" />
-                ${stepper("Portioner i fryseren", doneDraft.freeze, 0, m.portions, v => setDoneDraft({...doneDraft, freeze: v}))}
-                ${m.items.some(x => x.fresh) && html`<div className="small faint">${m.items.filter(x => x.fresh).map(x => x.term).join(", ")} fjernes fra "Har lige nu".</div>`}
-                <button className="btn primary" onClick=${()=>finishMeal(i)}>Gem</button>
-              </div>`}
-              ${pickMeal === i && html`<div className="list" style=${{marginTop:8}}>${plan.alts
-                .map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length }))
-                .sort((x, y) => (y.a.fav - x.a.fav) || x.a.name.localeCompare(y.a.name, "da"))
-                .map(({ a, k, hits }) => html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:44}} onClick=${()=>replaceMeal(i, k)}>
-                  <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div>${a.protein != null && html`<div className="sub">${a.protein} g protein</div>`}</div>
-                  <div className=${"end small " + (hits ? "pos" : "muted")}>${hits}/${a.items.length} på tilbud</div>
-                </button>`)}</div>`}
-            </div>
-          </div>`; })}${plan.freezer?.length > 0 && html`<div className="row" style=${{alignItems:"flex-start"}}>
-            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>Fryser</div>
-            <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${plan.freezer.map(f => `${f.portions}× ${f.name}`).join(", ")}</div><div className="sub" style=${{whiteSpace:"normal"}}>Tryk <b>Spist én</b> under Hjemme, når du tager en portion.</div></div>
-          </div>`}</div>
+      <div className="section">
+        <div className="section-head"><h2>Indkøb</h2></div>
+        <div className="card">
+          <div className="plan-stats">
+            <div><span className="v">${kr(Math.round(plan.total))}</span><span className="k">${plan.stores.join(" + ")}</span></div>
+            <div><span className="v pos">${kr(Math.max(0, Math.round(plan.normal - plan.total)))}</span><span className="k">sparet på tilbud</span></div>
+            <div><span className="v">${avgP != null ? `${avgP} g` : "–"}</span><span className="k">protein/aften${goal ? ` af ${goal}` : ""}</span></div>
+          </div>
+          ${goal > 0 && avgP != null && html`<div className="bar" style=${{height:6, marginTop:12}}><div style=${{width:`${Math.min(100, avgP / goal * 100)}%`, background:"var(--accent)"}}></div></div>
+            <div className="small faint" style=${{marginTop:6}}>${goal - avgP > 0 ? `Mangler ca. ${goal - avgP} g fra resten af dagen – fx 250 g skyr (25 g) eller 3 æg (19 g).` : "Aftensmaden dækker hele dit proteinmål. 💪"}</div>`}
+          ${bought.length > 0 && html`<div className="small" style=${{marginTop:10}}>Købt siden ${shortDate(plan.created)}: <b className=${spent > plan.total * 1.15 ? "neg" : ""}>${fmt(spent)}</b> (${bought.length} køb)</div>`}
+          ${plan.buy.length > 0 && html`<div className="btns" style=${{marginTop:12}}>
+            <button className="btn primary" onClick=${addToList}><${Icon} name="plus" /> Til indkøbslisten</button>
+            <button className="btn soft" aria-expanded=${showBuy} onClick=${()=>setShowBuy(!showBuy)}>${showBuy ? "Skjul varer" : `Se ${plan.buy.length} ${plan.buy.length === 1 ? "vare" : "varer"}`}</button>
+          </div>`}
+          <${Msg} k="plan" />
         </div>
-
-        ${plan.buy.length > 0 && html`<div className="section">
-          <div className="section-head"><h2>Det skal du købe</h2></div>
+        ${showBuy && html`<div style=${{marginTop:10}}>
+          ${plan.compare?.length > 1 && !plan.swapped && html`<div className="card" style=${{marginBottom:10}}>
+            <div className="small muted" style=${{marginBottom:6}}>Hele indkøbet inkl. varer til normalpris</div>
+            <div className="stack" style=${{gap:4}}>${plan.compare.map((c, i) => html`<div key=${i} style=${{display:"flex", justifyContent:"space-between", gap:12, fontWeight: i === 0 ? 600 : 400}}>
+              <span>${i === 0 ? "✓ " : ""}${c.stores.join(" + ")}</span><span className="num">ca. ${kr(Math.round(c.total))}</span></div>`)}</div>
+          </div>`}
+          ${plan.swapped && html`<div className="small faint" style=${{margin:"0 2px 8px"}}>Du har ændret planen, så butikkerne er ikke sammenlignet igen.</div>`}
           <div className="stack-gap">${Object.entries(shopping).sort(([x], [y]) => (x === "Normalpris") - (y === "Normalpris")).map(([store, items]) => html`<div key=${store}>
             <div className="small muted" style=${{margin:"4px 2px 6px", fontWeight:600}}>${store === "Normalpris" ? `Normalpris – køb i ${plan.stores[0]}` : `${store} – tilbud`}</div>
             <div className="list">${items.map(it => html`<div key=${it.term} className="row" style=${{minHeight:48}}>
@@ -2853,12 +2911,17 @@ function App() {
             </div>`)}</div>
           </div>`)}</div>
           <div className="small faint" style=${{marginTop:8}}>Mængderne lægges sammen på tværs af retterne og rundes op til hele pakker (pakkestørrelser og normalpriser er skøn). Det, du har hjemme, er trukket fra.</div>
-          <button className="btn soft block" style=${{marginTop:12}} onClick=${addToList}><${Icon} name="plus" /> Læg det hele på indkøbslisten</button>
         </div>`}
-        <${Msg} k="plan" />
       </div>`}
+
       ${old && html`<div className="card empty" style=${{marginTop:12}}>Madplanen er lavet om. Tryk <b>Lav ny madplan</b>.</div>`}
-      ${StoresBlock()}
+
+      <div className="section">
+        ${ready && html`<button className="setup-toggle" aria-expanded=${planSetup} onClick=${()=>setPlanSetup(!planSetup)}>
+          <${Icon} name="dots" /><span className="grow">Indstillinger</span><span className="small muted">${nights} aftener · ${cookDays} dage pr. ret · ${perNight} port.</span></button>`}
+        ${(!ready || planSetup) && Setup()}
+        <button className="btn primary block" style=${{marginTop:12}} disabled=${planBusy || !mealPool.length} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : plan ? "Lav ny madplan" : "Lav madplan"}</button>
+      </div>
     </div>`;
   };
 
@@ -3000,7 +3063,21 @@ function App() {
         ${m.notes?.length > 0 && html`<div><div className="small muted" style=${{marginBottom:4}}>Dine noter</div>${m.notes.slice(-5).reverse().map((n, j) => html`<div key=${j} className="small">📝 ${shortDate(n.date)}: ${n.text}</div>`)}</div>`}
       </div>`;
     };
+    const q = mealQ.trim().toLowerCase();
+    const isVr = (m) => /valdemarsro\.dk/.test(m.url || "");
+    const minutesOf = (m) => m.minutes || MEAL_STEPS[m.name]?.[0] || null;
+    const FILTERS = [["alle", "Alle"], ["fav", "♥ Favoritter"], ["protein", "Proteinrig"], ["hurtig", "Under 30 min"], ["vr", "Valdemarsro"], ["skip", "Fravalgt"]];
+    const shown = allMeals.filter(m => (!q || m.name.toLowerCase().includes(q) || m.ingredients.some(t => t.includes(q)))
+      && (mealFilter === "skip" ? m.skip : mealFilter === "alle" ? true : !m.skip)
+      && (mealFilter !== "fav" || m.fav) && (mealFilter !== "protein" || (mealProtein(m) ?? 0) >= 30)
+      && (mealFilter !== "hurtig" || (minutesOf(m) && minutesOf(m) <= 30)) && (mealFilter !== "vr" || isVr(m)))
+      .sort((a, b) => (a.skip - b.skip) || (b.fav - a.fav) || a.name.localeCompare(b.name, "da"));
     return html`<div>
+      <div className="meal-search">
+        <input className="input" value=${mealQ} onChange=${e=>setMealQ(e.target.value)} placeholder=${`Søg i ${allMeals.length} retter eller en ingrediens`} aria-label="Søg retter" />
+        <button className=${"btn " + (addOpen ? "soft" : "primary")} aria-expanded=${addOpen} onClick=${()=>setAddOpen(!addOpen)}>${addOpen ? "Luk" : "+ Ny ret"}</button>
+      </div>
+      ${addOpen && html`<div style=${{marginTop:10}}>
       <div className="card stack" style=${{marginBottom:12}}>
         <div className="small muted">Hent en opskrift fra et link (fx Valdemarsro). Appen laver retten med ingredienser og mængder.</div>
         <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); importRecipe(importUrl); }}>
@@ -3028,32 +3105,6 @@ function App() {
             <div className="small faint">Ingredienser og mængder hentes fra valdemarsro.dk, når du tilføjer en ret. Fremgangsmåden ser du under <b>Se opskrift</b>.</div>
           </div>`}
         </div>`; })()}
-      <div className="small muted" style=${{margin:"0 2px 10px"}}>♥ = vælges oftere. <b>Gider ikke</b> = kommer aldrig med i madplanen. Tryk ✕ for at fjerne en ingrediens, <b>+ Ingrediens</b> for at tilføje og <b>Mængder</b> for gram og portioner.</div>
-      <div className="list">${allMeals.map(m => html`<div key=${m.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: m.skip ? .45 : 1}}>
-        <button className="icon-btn" style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name}: yndlingsret`} disabled=${m.skip}
-          onClick=${()=>update(m, { fav: !m.fav })}>${m.fav ? "♥" : "♡"}</button>
-        <div className="main">
-          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${proteinChip(mealProtein(m))}${(m.up || m.down) ? html` <span className="small muted" style=${{fontWeight:400}}>${m.up ? ` 👍${m.up}` : ""}${m.down ? ` 👎${m.down}` : ""}</span>` : null}${m.minutes ? html` <span className="small muted" style=${{fontWeight:400}}>· ${m.minutes} min.</span>` : null}${MEAL_SOURCE[m.name] ? html` <span className="small muted" style=${{fontWeight:400}}>· ${MEAL_SOURCE[m.name].site}</span>` : m.url?.includes("valdemarsro") ? html` <span className="small muted" style=${{fontWeight:400}}>· Valdemarsro</span>` : null}</div>
-          ${m.skip
-            ? html`<div className="sub">Kommer ikke med i madplanen</div>`
-            : html`<div style=${{display:"flex", flexWrap:"wrap", gap:5, marginTop:6}}>
-                ${m.ingredients.map(t => html`<button key=${t} className="chip" style=${{border:"1px solid var(--border)"}} aria-label=${`Fjern ${t} fra ${m.name}`}
-                  onClick=${()=>{ if (m.ingredients.length > 1) update(m, { ingredients: m.ingredients.filter(x => x !== t) }); }}>${t}${m.ingredients.length > 1 ? " ✕" : ""}</button>`)}
-                <button className="chip info" aria-expanded=${ingFor === m.name} onClick=${()=>{ setIngFor(ingFor === m.name ? null : m.name); setIngSearch(""); }}>${ingFor === m.name ? "Færdig" : "+ Ingrediens"}</button>
-              </div>
-`}
-        </div>
-        <div className="end" style=${{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
-          ${(m.url || MEAL_STEPS[m.name]) && !m.skip && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(m)}>Se opskrift</button>`}
-          ${!m.skip && html`<button className="link-btn small" aria-expanded=${openRecipe === m.name} onClick=${()=>setOpenRecipe(openRecipe === m.name ? null : m.name)}>${openRecipe === m.name ? "Luk" : "Mængder"}</button>`}
-          <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
-          ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop(s => ({...s, meals: (s.meals || []).filter(x => x.id !== m.id)})); showUndo(`${m.name} er slettet`, () => setShop(s => ({...s, meals: prev}))); }}>Slet</button>`}
-        </div>
-        ${!m.skip && (ingFor === m.name || openRecipe === m.name) && html`<div style=${{flexBasis:"100%", minWidth:0}}>
-          ${ingFor === m.name && IngredientPicker(m)}
-          ${openRecipe === m.name && RecipeView(m)}
-        </div>`}
-      </div>`)}</div>
       <div className="section">
         <div className="section-head"><h2>Tilføj din egen ret</h2></div>
         <div className="card stack">
@@ -3069,6 +3120,39 @@ function App() {
           <button className="btn primary" disabled=${!mealDraft.name.trim() || !(mealDraft.items || []).length} onClick=${addOwn}>Tilføj ret</button>
         </div>
       </div>
+      </div>`}
+      <div className="cat-tabs" style=${{margin:"10px 0"}}>${FILTERS.map(([id, label]) => html`<button key=${id} className=${mealFilter === id ? "on" : ""} aria-pressed=${mealFilter === id} onClick=${()=>setMealFilter(id)}>${label}</button>`)}</div>
+      ${shown.length === 0 && html`<div className="card empty">Ingen retter passer.</div>`}
+      <div className="stack" style=${{gap:8}}>${shown.map(m => { const open = mealOpen === m.name, prot = mealProtein(m), min = minutesOf(m), src = isVr(m) ? "Valdemarsro" : MEAL_SOURCE[m.name]?.[0] || null;
+        return html`<div key=${m.id} className=${"meal-card" + (open ? " open" : "") + (m.skip ? " dim" : "")}>
+        <div className="meal-head" style=${{cursor:"default"}}>
+          <button className="icon-btn" style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20, flexShrink:0}} aria-pressed=${!!m.fav} aria-label=${`${m.name}: yndlingsret`} disabled=${m.skip}
+            onClick=${()=>update(m, { fav: !m.fav })}>${m.fav ? "♥" : "♡"}</button>
+          <button className="grow" style=${{background:"none", border:0, color:"inherit", font:"inherit", textAlign:"left", padding:0, cursor:"pointer"}} aria-expanded=${open} onClick=${()=>{ setMealOpen(open ? null : m.name); setIngFor(null); setOpenRecipe(null); }}>
+            <div className="title">${m.name}</div>
+            <div className="sub">${m.skip ? "Kommer ikke med i madplanen" : [prot != null && `${prot} g protein`, min && `${min} min`, src, m.up && `👍${m.up}`, m.down && `👎${m.down}`].filter(Boolean).join(" · ") || `${m.ingredients.length} ingredienser`}</div>
+          </button>
+          <span className="meal-chev" onClick=${()=>{ setMealOpen(open ? null : m.name); setIngFor(null); setOpenRecipe(null); }}>${open ? "−" : "+"}</span>
+        </div>
+        ${open && html`<div className="meal-body">
+          ${!m.skip && html`<div style=${{display:"flex", flexWrap:"wrap", gap:5}}>
+            ${m.ingredients.map(t => html`<button key=${t} className="chip" style=${{border:"1px solid var(--border)"}} aria-label=${`Fjern ${t} fra ${m.name}`}
+              onClick=${()=>{ if (m.ingredients.length > 1) update(m, { ingredients: m.ingredients.filter(x => x !== t) }); }}>${t}${m.ingredients.length > 1 ? " ✕" : ""}</button>`)}
+            <button className="chip info" aria-expanded=${ingFor === m.name} onClick=${()=>{ setIngFor(ingFor === m.name ? null : m.name); setIngSearch(""); }}>${ingFor === m.name ? "Færdig" : "+ Ingrediens"}</button>
+          </div>`}
+          ${!m.skip && ingFor === m.name && IngredientPicker(m)}
+          <div className="meal-actions">
+            ${(m.url || MEAL_STEPS[m.name]) && !m.skip && html`<button className="btn soft" onClick=${()=>openCook(m)}>Se opskrift</button>`}
+            ${!m.skip && html`<button className="btn soft" aria-expanded=${openRecipe === m.name} onClick=${()=>setOpenRecipe(openRecipe === m.name ? null : m.name)}>${openRecipe === m.name ? "Luk mængder" : "Mængder og næring"}</button>`}
+          </div>
+          ${!m.skip && openRecipe === m.name && RecipeView(m)}
+          <div className="meal-links">
+            <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
+            ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop(s => ({...s, meals: (s.meals || []).filter(x => x.id !== m.id)})); showUndo(`${m.name} er slettet`, () => setShop(s => ({...s, meals: prev}))); }}>Slet</button>`}
+          </div>
+        </div>`}
+      </div>`; })}</div>
+      <div className="small faint" style=${{marginTop:10}}>♥ = vælges oftere i madplanen. <b>Gider ikke</b> = kommer aldrig med.</div>
     </div>`;
   };
 
@@ -3206,8 +3290,22 @@ function App() {
     </div>`;
   };
 
+  // The food budget as one line; tap for the full card with weeks and purchases (remembered per device).
+  const FoodBudgetLine = () => {
+    const ym = currentBudgetMonth(), st = monthStats(ym), pay = nextPayday();
+    const budget = +budgets[FOOD_CAT] || 0, spent = st.byCat[FOOD_CAT] || 0, left = budget - spent;
+    return html`<button className="food-sum" aria-expanded="false" onClick=${()=>{ setFoodBudgetOpen(true); store.set("food_budget_open", "1"); }}>
+      <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="food" /></div>
+      <div className="grow">
+        <div><span className=${"v " + (left < 0 ? "neg" : "")}>${fmt(left)}</span> <span className="small muted">tilbage til mad · ${fmt(Math.max(0, left) / Math.max(1, pay.days))} pr. dag</span></div>
+        <div className="bar"><div style=${{width:`${budget > 0 ? Math.min(100, spent / budget * 100) : 0}%`, background: left < 0 ? "var(--neg)" : "var(--pos)"}}></div></div>
+      </div>
+      <${Icon} name="chevron" />
+    </button>`;
+  };
+
   const FoodPage = () => html`<div>
-    ${FoodBudget()}
+    ${foodBudgetOpen ? html`<div>${FoodBudget()}<button className="link-btn small" style=${{margin:"-4px 2px 12px"}} onClick=${()=>{ setFoodBudgetOpen(false); store.remove("food_budget_open"); }}>Skjul madbudgettet</button></div>` : FoodBudgetLine()}
     ${deals.length > 0 && html`<div className="tip" style=${{marginTop:0, marginBottom:12, alignItems:"flex-start"}}>
       <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div>
       <div className="stack" style=${{gap:6, flex:1}}>${deals.map(d => html`<div key=${d.term}>
