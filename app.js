@@ -2285,8 +2285,17 @@ function App() {
     return () => { gone = true; };
   }, [page, staples.join(","), shopStores.join(","), shop.lat]);
   const newOffers = !!(shop.plan?.created && shop.offerCheck?.newest && isoDate(new Date(shop.offerCheck.newest)) > shop.plan.created);
+  // Where today falls in the plan: day 0 is the day it was made; each meal covers cookDays days.
+  const planDay = shop.plan?.created ? Math.round((parseDKDate(isoDate(new Date())) - parseDKDate(shop.plan.created)) / 864e5) : 0;
+  const planLen = shop.plan ? (shop.plan.cookNights ?? shop.plan.nights) : 0;
+  const mealState = (i) => {
+    const from = i * (shop.plan?.cookDays || 1), to = Math.min(from + (shop.plan?.cookDays || 1), planLen) - 1;
+    return to < planDay ? "past" : from > planDay ? "future" : "now";
+  };
+  const planEnded = !!(shop.plan?.buy && shop.plan.meals?.length && planDay >= planLen);
+  const foodBadge = newOffers || planEnded;
   const deals = (shop.offerCheck?.deals || []).filter(d => (!d.till || Date.parse(d.till) >= Date.now()) && !shop.items.some(i => !i.done && i.name.toLowerCase() === d.term));
-  useEffect(() => { try { newOffers ? navigator.setAppBadge?.() : navigator.clearAppBadge?.(); } catch {} }, [newOffers]);
+  useEffect(() => { try { foodBadge ? navigator.setAppBadge?.() : navigator.clearAppBadge?.(); } catch {} }, [foodBadge]);
 
   const makePlan = async () => {
     setPlanBusy(true);
@@ -2299,11 +2308,16 @@ function App() {
         const chunk = terms.slice(i, i + 6);
         (await Promise.all(chunk.map(offersFor))).forEach((l, k) => { lists[chunk[k]] = l; });
       }
-      const r = planWeek(mealPool, lists, shopStores, Math.ceil(cookNights / cookDays),
+      // Meals from the last plan the user chose to carry over: already bought, so they come first and cost nothing.
+      const carried = (shop.plan?.meals || []).filter(m => !m.done && (shop.carry || []).includes(m.name))
+        .map(m => ({ ...m, done: false, rate: undefined, carried: true, items: m.items.map(it => ({ ...it, offer: null, have: true, fresh: false })) }));
+      const count = Math.max(0, Math.ceil(cookNights / cookDays) - carried.length);
+      const r0 = planWeek(mealPool.filter(m => !carried.some(c => c.name === m.name)), lists, shopStores, count,
         { staples, rejected: shop.rejected || [], pantry, portions: cookDays * perNight, protein: shop.preferProtein !== false });
+      const r = { ...r0, meals: [...carried, ...r0.meals] };
       let left = fromFreezer; const fz = [];
       for (const f of freezer) { if (left <= 0) break; const n = Math.min(left, +f.portions || 0); if (n) fz.push({ id: f.id, name: f.name, portions: n }); left -= n; }
-      setShop(s => ({...s, plan: { created: isoDate(new Date()), nights, cookDays, perNight, cookNights, freezer: fz, ...r }}));
+      setShop(s => ({...s, carry: [], plan: { created: isoDate(new Date()), nights, cookDays, perNight, cookNights, freezer: fz, ...r }}));
     } finally { setPlanBusy(false); }
   };
 
@@ -2386,7 +2400,19 @@ function App() {
     const spent = -bought.reduce((s, t) => s + t.amount, 0);
     const chip = (it, portions) => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border: `1px ${it.have || it.staple ? "dashed" : "solid"} var(--border)`}}>${it.term}${amountOf(it, portions) ? ` ${amountOf(it, portions)}` : ""}${it.staple ? " · fast vare" : it.have ? " · har" : it.offer ? " · tilbud" : ""}</span>`;
     return html`<div>
-      ${newOffers && html`<div className="tip tap" style=${{marginTop:0, marginBottom:12}} onClick=${makePlan}>
+      ${planEnded && (() => {
+        const lastDay = WEEKDAYS[parseDKDate(addDays(plan.created, planLen - 1)).getDay()].toLowerCase();
+        const unmade = plan.meals.filter(m => !m.done), carry = shop.carry || [];
+        return html`<div className="card stack" style=${{marginBottom:12, borderLeft:"3px solid var(--accent)"}}>
+          <div><b>Madplanen sluttede ${lastDay}.</b> Lav en ny for de næste ${nights} dage${newOffers ? " – der er også kommet nye tilbudsaviser" : ""}.</div>
+          ${unmade.length > 0 && html`<div>
+            <div className="small muted" style=${{marginBottom:6}}>Ikke markeret som lavet. Har du stadig ingredienserne, så tryk på retten – så kommer den med igen og købes ikke en gang til:</div>
+            <div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${unmade.map(m => { const on = carry.includes(m.name); return html`<button key=${m.name} className=${"chip " + (on ? "pos" : "")} style=${on ? {} : {border:"1px solid var(--border)"}} aria-pressed=${on}
+              onClick=${()=>setShop(s => ({...s, carry: on ? carry.filter(x => x !== m.name) : [...carry, m.name]}))}>${on ? "✓ " : "+ "}${m.name}</button>`; })}</div>
+          </div>`}
+          <button className="btn primary block" disabled=${planBusy} onClick=${makePlan}>${planBusy ? "Finder tilbud…" : "Lav ny madplan"}</button>
+        </div>`; })()}
+      ${newOffers && !planEnded && html`<div className="tip tap" style=${{marginTop:0, marginBottom:12}} onClick=${makePlan}>
         <div className="sq sm" style=${{background:"var(--info-bg, var(--pos-bg))", color:"var(--info, var(--pos))"}}><${Icon} name="cart" /></div>
         <div>Der er kommet <b>nye tilbudsaviser</b> siden din madplan. Tryk her for at lave en ny.</div></div>`}
       <div className="card stack">
@@ -2432,11 +2458,12 @@ function App() {
             <div className="main"><div style=${{display:"flex", flexWrap:"wrap", gap:4}}>${plan.staples.map(it => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border:"1px solid var(--border)"}}>${it.term} · ${it.offer ? kr(it.offer.price) : `ca. ${kr(it.normal)}`}</span>`)}</div></div>
           </div>`}${plan.meals.map((m, i) => {
             const rec = allMeals.find(x => x.name === m.name), lastNote = rec?.notes?.[rec.notes.length - 1];
-            return html`<div key=${i} className="row" style=${{alignItems:"flex-start", opacity: m.done ? .6 : 1}}>
-            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}</div>
+            const st = mealState(i);
+            return html`<div key=${i} className="row" style=${{alignItems:"flex-start", opacity: m.done || st === "past" ? .55 : 1}}>
+            <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}${st === "now" && !planEnded ? html`<div><span className="chip info" style=${{fontSize:11, padding:"1px 8px", marginTop:4, display:"inline-block"}}>I dag</span></div>` : null}</div>
             <div className="main">
               <div className="title" style=${{whiteSpace:"normal"}}>${m.done ? "✓ " : m.fav ? "♥ " : ""}${m.name}${proteinChip(m.protein)}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
-              <div className="small muted" style=${{marginTop:2}}>${m.portions} portioner${m.done ? ` · lavet${m.rate > 0 ? " 👍" : m.rate < 0 ? " 👎" : ""}` : ""}</div>
+              <div className="small muted" style=${{marginTop:2}}>${m.carried ? "Fra sidste plan · " : ""}${m.portions} portioner${m.done ? ` · lavet${m.rate > 0 ? " 👍" : m.rate < 0 ? " 👎" : ""}` : ""}</div>
               ${lastNote && html`<div className="small" style=${{marginTop:4}}>📝 Næste gang: ${lastNote.text}</div>`}
               <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => chip(it, m.portions))}</div>
               ${!m.done && html`<div style=${{display:"flex", flexWrap:"wrap", gap:14, marginTop:6, alignItems:"center"}}>
@@ -2965,7 +2992,7 @@ function App() {
       <button onClick=${()=>{ toast.restore(); setToast(null); clearTimeout(toastTimer.current); }}>Fortryd</button>
     </div>`}
     <nav className="nav"><div className="nav-inner">
-      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); window.scrollTo(0,0); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && newOffers ? html`<span className="nav-dot" aria-label="Nye tilbud"></span>` : null}</button>`)}
+      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); window.scrollTo(0,0); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
     </div></nav>
   </div>`;
 }
