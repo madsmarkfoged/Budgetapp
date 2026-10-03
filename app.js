@@ -1309,6 +1309,8 @@ async function callBridge(path, body = {}) {
 }
 
 const redirectUrl = () => location.origin + location.pathname;
+// The app scrolls inside #root (see styles.css), not the window.
+const scrollToTop = () => document.getElementById("root")?.scrollTo(0, 0);
 
 // ---------------- sync between devices ----------------
 // The data is gzipped and encrypted (AES-GCM, key derived from the worker password) in the browser; the
@@ -2149,7 +2151,7 @@ function App() {
 
   const Msg = ({ k }) => msgs[k] ? html`<div className=${"msg " + (/Fejl|fejl|ikke|afvist|mangler|udløbet|afbrudt|passede/.test(msgs[k]) ? "neg" : "pos")}>${msgs[k]}</div>` : null;
   const badge = (text, bg, fg = "#fff") => html`<div className="badge" style=${{background: bg, color: fg}}>${text}</div>`;
-  const goSub = (id) => { setPage("more"); setSub(id); window.scrollTo(0,0); };
+  const goSub = (id) => { setPage("more"); setSub(id); scrollToTop(); };
   const amountClass = (n) => n >= 0 ? "num pos" : "num";
   const stag = (i) => ({ "--i": Math.min(i, 14) });
 
@@ -2249,7 +2251,7 @@ function App() {
       </div>`}
       ${(() => { const d = new Date(), lastPay = paydayIn(d.getFullYear(), d.getMonth()) <= d ? paydayIn(d.getFullYear(), d.getMonth()) : paydayIn(d.getMonth() ? d.getFullYear() : d.getFullYear() - 1, (d.getMonth() + 11) % 12);
         const since = Math.floor((d - lastPay) / 864e5); const rm = prevMonth(currentBudgetMonth());
-        return since >= 0 && since <= 5 && monthStats(rm).count > 0 && html`<button className="tip tap" style=${{width:"100%", textAlign:"left", font:"inherit", color:"inherit"}} onClick=${()=>{ setReportMonth(rm); setPage("more"); setSub("report"); window.scrollTo(0,0); }}>
+        return since >= 0 && since <= 5 && monthStats(rm).count > 0 && html`<button className="tip tap" style=${{width:"100%", textAlign:"left", font:"inherit", color:"inherit"}} onClick=${()=>{ setReportMonth(rm); setPage("more"); setSub("report"); scrollToTop(); }}>
           <div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="donut" /></div>
           <div>Din rapport for <b>${monthName(rm).toLowerCase()}</b> er klar. Tryk for at se, hvordan måneden gik.</div></button>`; })()}
       ${subscriptions.filter(x => x.rose && x.rose.date >= addDays(isoDate(new Date()), -45)).map(x => html`<div key=${x.key} className="tip">
@@ -3159,7 +3161,7 @@ function App() {
           <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div>
           <div>${plan.meals.length ? html`Gå i <b>${plan.stores.join(" og ")}</b>. Indkøbet koster ca. <b>${kr(Math.round(plan.total))}</b>${plan.normal > plan.total ? html` – du sparer ca. <b className="pos">${kr(Math.round(plan.normal - plan.total))}</b> mod normalpris` : ""}` : "Fryseren rækker til alle aftenerne – du skal ikke købe ind til aftensmad."}</div>
         </div>
-        ${bought.length > 0 && html`<div className="small" style=${{margin:"8px 2px 0"}}>Siden ${shortDate(plan.created)} har du købt mad for <b className=${spent > plan.total * 1.15 ? "neg" : ""}>${fmt(spent)}</b> (${bought.length} køb) – planen regnede med ca. ${fmt(Math.round(plan.total))}.</div>`}
+        ${bought.length > 0 && html`<div className="small" style=${{margin:"8px 2px 0"}}>Siden ${shortDate(plan.created)} har du købt mad for <b className=${spent > plan.total * 1.15 ? "neg" : ""}>${fmt(spent)}</b> (${bought.length} køb) – planen regnede med ca. ${fmt(Math.round(plan.total))}</div>`}
         ${plan.swapped && html`<div className="small faint" style=${{margin:"8px 2px 0"}}>Du har ændret planen. Tryk <b>Lav ny madplan</b> for at sammenligne butikkerne igen.</div>`}
         ${plan.compare?.length > 1 && !plan.swapped && html`<div className="card" style=${{marginTop:8}}>
           <div className="small muted" style=${{marginBottom:6}}>Hele indkøbet inkl. varer til normalpris</div>
@@ -3782,13 +3784,13 @@ function App() {
     const pages = MORE_PAGES.filter(p => apiKey || !["ai", "apikey"].includes(p.id));
     return html`<div>
       <div className="list stagger">
-      ${pages.map((p, i) => html`<button key=${p.id} style=${stag(i)} className="row" onClick=${()=>{ setSub(p.id); window.scrollTo(0,0); }}>
+      ${pages.map((p, i) => html`<button key=${p.id} style=${stag(i)} className="row" onClick=${()=>{ setSub(p.id); scrollToTop(); }}>
         <div className="sq" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name=${p.icon} /></div>
         <div className="main"><div className="title">${p.label}</div><div className=${"sub" + (p.id === "data" && backupStale ? " neg" : "")}>${p.id === "data" ? backupText : p.sub}</div></div>
         <span className="faint"><${Icon} name="chevron" /></span>
       </button>`)}
       </div>
-      ${!apiKey && html`<button className="link-btn small" style=${{display:"block", margin:"14px auto 0", color:"var(--text-2)"}} onClick=${()=>{ setSub("apikey"); window.scrollTo(0,0); }}>Slå AI-funktioner til (kræver Claude API-nøgle)</button>`}
+      ${!apiKey && html`<button className="link-btn small" style=${{display:"block", margin:"14px auto 0", color:"var(--text-2)"}} onClick=${()=>{ setSub("apikey"); scrollToTop(); }}>Slå AI-funktioner til (kræver Claude API-nøgle)</button>`}
     </div>`;
   };
 
@@ -3828,7 +3830,7 @@ function App() {
     </div>`}
     ${cookFor && CookView()}
     <nav className="nav"><div className="nav-inner">
-      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); window.scrollTo(0,0); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
+      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); scrollToTop(); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
     </div></nav>
   </div>`;
 }

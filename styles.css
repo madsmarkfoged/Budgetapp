@@ -65,7 +65,12 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; }
+html, body { margin: 0; height: 100%; overflow: hidden; scrollbar-width: none; }
+/* The app scrolls inside #root instead of the page itself, so the scroll indicator can be hidden (iOS shows
+   one for the page that CSS can't remove). */
+#root { position: fixed; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: none; scrollbar-width: none; }
+#root::-webkit-scrollbar, .cook-sheet::-webkit-scrollbar, html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.cook-sheet { scrollbar-width: none; }
 body {
   background: var(--bg);
   color: var(--text);
