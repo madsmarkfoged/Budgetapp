@@ -120,12 +120,13 @@ button:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); out
 .nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
   background: var(--nav); border-top: 0.5px solid var(--border);
-  padding-bottom: env(safe-area-inset-bottom);
+  /* Sit closer to the iPhone's home indicator than the full safe area (which leaves a big gap). */
+  padding-bottom: max(4px, calc(env(safe-area-inset-bottom) - 18px));
 }
 .nav-inner { max-width: 560px; margin: 0 auto; display: flex; }
 .nav button {
   flex: 1; border: none; background: none; cursor: pointer; color: var(--text-3);
-  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0 10px; font-size: 11px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 0 6px; font-size: 11px;
   transition: color .2s;
 }
 .nav button.on { color: var(--accent); }
