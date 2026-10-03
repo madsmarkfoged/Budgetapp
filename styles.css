@@ -167,6 +167,8 @@ button:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); out
 .ranges.plain { margin: 0; }
 .ranges.plain button { color: var(--text-2); }
 .ranges.plain button.on { background: var(--accent-bg); color: var(--accent); }
+.hold-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+.hold-tools { display: flex; gap: 12px; }
 
 .tiles { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 8px; margin-top: 10px; }
 .tile { background: var(--surface); border-radius: var(--r-md); padding: 11px 13px; min-width: 0; }

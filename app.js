@@ -91,6 +91,23 @@ async function fetchSaxoLedger(token) {
   };
 }
 
+// Today's price change per position (Saxo's change since the previous close), straight from the browser
+// like the ledger. Keyed by NetPositionId, the same id the worker's /saxo/portfolio returns.
+async function fetchSaxoDay(token) {
+  for (const base of SAXO_GATEWAYS) {
+    const r = await fetch(base + "/port/v1/netpositions/me?FieldGroups=NetPositionView&$top=500", { headers: { Authorization: "Bearer " + token } });
+    if (r.status === 401) continue;
+    if (!r.ok) throw new Error(`Saxo svarede ${r.status}`);
+    const out = {};
+    for (const p of (await r.json()).Data || []) {
+      const v = p.NetPositionView || {};
+      if (typeof v.InstrumentPriceDayPercentChange === "number") out[p.NetPositionId] = v.InstrumentPriceDayPercentChange;
+    }
+    return out;
+  }
+  return null;
+}
+
 // Holding type for the allocation bar: Saxo tells us; for manual holdings guess from the name.
 const TYPE_LABEL = { Etf: "ETF", Stock: "Aktier", MutualFund: "Fonde", Bond: "Obligationer" };
 const TYPE_COLOR = { ETF: "#8B7BFF", Aktier: "#4FC3F7", Fonde: "#F2B35B", Obligationer: "#F48FB1", Andet: "#90A4AE", Kontant: "#9CF0C8" };
@@ -396,6 +413,7 @@ const MORE_PAGES = [
 ];
 
 const RANGES = { "1M": 31, "3M": 92, "1Å": 366 };
+const HOLD_PERIODS = { "I dag": 1, "1U": 7, "1M": 31, "1Å": 366 };
 // SU-fribeløb per month (su.dk, videregående uddannelse, før skat men efter AM-bidrag): with SU, enrolled
 // without SU, and not studying. The year's fribeløb is the sum over the months.
 const SU_FRIBELOB = { 2026: { su: 20749, noSu: 23598, out: 45420 } };
@@ -487,6 +505,9 @@ function App() {
   const [editBudget, setEditBudget] = useState(false);
   const [nwRange, setNwRange] = useState("1M");
   const [invRange, setInvRange] = useState("3M");
+  // Holdings list: which change to show (I dag/1U/1M/1Å/Samlet), in % or kr., and the sort order. Per device.
+  const [holdView, setHoldViewState] = useState(() => store.json("hold_view") || { per: "Samlet", unit: "pct", sort: "value" });
+  const setHoldView = (patch) => setHoldViewState(v => { const n = { ...v, ...patch }; store.set("hold_view", JSON.stringify(n)); return n; });
   const [pickTrip, setPickTrip] = useState(null);
   const [csvPaste, setCsvPaste] = useState("");
   const [msgs, setMsgs] = useState({});
@@ -692,13 +713,15 @@ function App() {
   useEffect(() => {
     if (!holdings.length || !(invValue > 0)) return;
     const today = isoDate(new Date());
-    const p = { d: today, v: Math.round(invValue), c: Math.round(invPutIn ?? (invCost + (+cash || 0))), ...(askValue != null ? { a: Math.round(askValue) } : {}) };
+    // `p`: each holding's price (in its own currency) so the list can show change over a period.
+    const px = {}; for (const h of holdings) if (+h.price > 0) px[h.id] = +h.price;
+    const p = { d: today, v: Math.round(invValue), c: Math.round(invPutIn ?? (invCost + (+cash || 0))), ...(askValue != null ? { a: Math.round(askValue) } : {}), p: px };
     setInvHistory(h => {
       const last = h[h.length-1];
-      if (last && last.d === today) return last.v === p.v && last.c === p.c && last.a === p.a ? h : [...h.slice(0,-1), p];
+      if (last && last.d === today) return last.v === p.v && last.c === p.c && last.a === p.a && JSON.stringify(last.p) === JSON.stringify(px) ? h : [...h.slice(0,-1), p];
       return [...h, p].slice(-1500);
     });
-  }, [invValue, invCost, invPutIn, askValue]);
+  }, [invValue, invCost, invPutIn, askValue, holdings]);
 
   // ---------- Face ID lock ----------
   const unlock = async () => {
@@ -999,7 +1022,7 @@ function App() {
     return t;
   };
 
-  const applySaxoPortfolio = (p) => {
+  const applySaxoPortfolio = (p, day) => {
     const { holdings: hs, fxRates: fx } = stateRef.current;
     const fxNext = { ...fx };
     for (const pos of p.positions) {
@@ -1015,6 +1038,7 @@ function App() {
     const fromSaxo = p.positions.map(x => ({
       id: "saxo:" + x.id, name: x.name, ticker: root(x.symbol), currency: x.currency,
       shares: x.amount, avgCost: x.avgPrice, price: x.price, type: x.assetType || null, source: "saxo", accountId: x.accountId || null,
+      ...(day && day[x.id] != null ? { dayPct: day[x.id], dayAt: isoDate(new Date()) } : {}),
     }));
     setHoldings([...fromSaxo, ...keep]);
     if (p.accounts?.length) setPrefs(pr => ({ ...pr, saxoAccounts: p.accounts }));
@@ -1036,7 +1060,8 @@ function App() {
     let p;
     try { p = await callBridge("/saxo/portfolio", { access_token: t.access }); }
     catch (e) { if (e.code === "saxo_login") { setSaxoTokens(null); return false; } throw e; }
-    const r = applySaxoPortfolio(p);
+    const day = await fetchSaxoDay(t.access).catch(() => null);
+    const r = applySaxoPortfolio(p, day);
     try { setSaxoLedger(await fetchSaxoLedger(t.access)); } catch {}
     if (r.currencyWarning) flash("saxo", `Bemærk: din Saxo-konto er i ${r.currencyWarning}, ikke DKK. Kontantbeløbet er ikke omregnet.`, 10000);
     return true;
@@ -1586,7 +1611,32 @@ function App() {
     if ((+cash || 0) > 0) groups.Kontant = +cash;
     const alloc = Object.entries(groups).filter(([,v]) => v > 0).sort((a,b) => b[1] - a[1]);
     const allocTotal = alloc.reduce((s, [,v]) => s + v, 0);
-    const sorted = holdings.slice().sort((a, b) => holdingValue(b) - holdingValue(a));
+    // Change for one holding over the chosen period: { pct, kr } or null when there's nothing to compare with.
+    const today = isoDate(new Date());
+    const priceThen = (h, maxDate) => { for (let i = invHistory.length - 1; i >= 0; i--) { const x = invHistory[i]; if (x.d <= maxDate && x.p?.[h.id] > 0) return x.p[h.id]; } return null; };
+    const change = (h, per) => {
+      const val = holdingValue(h);
+      if (per === "Samlet") { const cost = holdingCost(h); return cost > 0 ? { pct: (val - cost) / cost * 100, kr: val - cost } : null; }
+      let pct = null;
+      if (per === "I dag" && h.dayPct != null && h.dayAt >= addDays(today, -3)) pct = h.dayPct;
+      else {
+        const then = priceThen(h, per === "I dag" ? addDays(today, -1) : addDays(today, -HOLD_PERIODS[per]));
+        if (then) pct = ((+h.price || 0) / then - 1) * 100;
+      }
+      return pct == null ? null : { pct, kr: val - val / (1 + pct / 100) };
+    };
+    const per = holdView.per;
+    const changes = Object.fromEntries(holdings.map(h => [h.id, change(h, per)]));
+    const withChg = holdings.filter(h => changes[h.id]);
+    const totKr = withChg.reduce((s, h) => s + changes[h.id].kr, 0);
+    const totBase = withChg.reduce((s, h) => s + holdingValue(h), 0) - totKr;
+    const day = holdings.map(h => change(h, "I dag")).filter(Boolean);
+    const dayKr = day.reduce((s, c) => s + c.kr, 0);
+    const holdTotal = holdings.reduce((s, h) => s + holdingValue(h), 0);
+    const sorted = holdings.slice().sort(holdView.sort === "change"
+      ? (a, b) => (changes[b.id]?.pct ?? -1e9) - (changes[a.id]?.pct ?? -1e9)
+      : (a, b) => holdingValue(b) - holdingValue(a));
+    const chgText = (c) => holdView.unit === "kr" ? `${c.kr >= 0 ? "+" : ""}${fmt(c.kr)}` : pctf(c.pct);
     return html`<div>
       <div className="hero invest">
         <div className="label">${sync.saxo ? "Depot hos Saxo" : "Depotværdi"}</div>
@@ -1595,6 +1645,9 @@ function App() {
           ${invBasis > 0 && html`<span className=${"chip " + (invGain >= 0 ? "up" : "down")}>${pctf(invGain/invBasis*100)}</span>`}
           <span className="hm">${invGain >= 0 ? "+" : ""}${fmt(invGain)} i alt${invPutIn != null ? ` · indsat ${fmt(invPutIn)}` : ""}</span>
         </div>
+        ${day.length > 0 && html`<div className="hero-row" style=${{marginTop:6}}>
+          <span className=${"chip " + (dayKr >= 0 ? "up" : "down")}>I dag ${dayKr >= 0 ? "+" : ""}${fmt(dayKr)}</span>
+        </div>`}
         ${allocTotal > 0 && html`
           <div className="alloc">${alloc.map(([k, v], i) => html`<div key=${k} style=${{flex: v, background: TYPE_COLOR[k] || TYPE_COLOR.Andet, animationDelay:`${i*80}ms`}}></div>`)}</div>
           <div className="alloc-legend hm">${alloc.map(([k, v]) => html`<span key=${k}>${k} ${Math.round(v / allocTotal * 100)} %</span>`)}</div>`}
@@ -1654,20 +1707,30 @@ function App() {
       ${AskBlock()}
       <div className="section">
         <div className="section-head"><h2>Beholdninger</h2><button className="link-btn" onClick=${()=>{ const h = {id:uid(),name:"Ny beholdning",ticker:"",currency:"DKK",shares:0,avgCost:0,price:0}; setHoldings([...holdings, h]); setOpenHolding(h.id); }}>+ Manuel</button></div>
+        ${holdings.length > 0 && html`<div className="hold-bar">
+          <div className="ranges plain">${Object.keys(HOLD_PERIODS).concat("Samlet").map(r => html`<button key=${r} className=${per === r ? "on" : ""} onClick=${()=>setHoldView({ per: r })}>${r}</button>`)}</div>
+          <div className="hold-tools">
+            <button className="link-btn small" onClick=${()=>setHoldView({ unit: holdView.unit === "kr" ? "pct" : "kr" })}>${holdView.unit === "kr" ? "Vis %" : "Vis kr."}</button>
+            <button className="link-btn small" onClick=${()=>setHoldView({ sort: holdView.sort === "change" ? "value" : "change" })}>Sortér: ${holdView.sort === "change" ? "ændring" : "værdi"}</button>
+          </div>
+        </div>
+        <div className="small muted" style=${{margin:"-2px 2px 8px"}}>${withChg.length
+          ? html`${per === "Samlet" ? "Gevinst i alt" : per === "I dag" ? "I dag" : `Seneste ${per.toLowerCase()}`}: <b className=${totKr >= 0 ? "pos" : "neg"}>${totKr >= 0 ? "+" : ""}${fmt(totKr)}${totBase > 0 ? ` (${pctf(totKr / totBase * 100)})` : ""}</b>${withChg.length < holdings.length ? ` · ${holdings.length - withChg.length} uden data` : ""}`
+          : per === "I dag" ? "Ingen dagsændring endnu – tryk Opdater ved Saxo." : `Appen gemmer kurserne én gang om dagen, så ${per} kan vises, når der er gået ${per === "1U" ? "en uge" : per === "1M" ? "en måned" : "et år"}.`}</div>`}
         ${holdings.length === 0 ? html`<div className="card empty">Ingen beholdninger. Forbind Saxo, eller tilføj manuelt.</div>` : html`
           <div className="list stagger">
             ${sorted.map((h, i) => {
               const cur = h.currency || "DKK";
               const val = holdingValue(h), cost = holdingCost(h);
-              const gainPct = cost > 0 ? (val - cost) / cost * 100 : null;
+              const c = changes[h.id];
               const open = openHolding === h.id;
               const color = TYPE_COLOR[holdingType(h)] || TYPE_COLOR.Andet;
               const setH = (patch) => setHoldings(holdings.map(x=>x.id===h.id?{...x,...patch}:x));
               return html`<div key=${h.id} style=${stag(i)}>
                 <button className="row" onClick=${()=>setOpenHolding(open ? null : h.id)}>
                   ${badge((h.ticker || h.name || "?").replace(/[^A-Za-z0-9ÆØÅæøå]/g,"").slice(0,3).toUpperCase(), color + "33", tint(color, 0.35))}
-                  <div className="main"><div className="title">${h.name}</div><div className="sub">${numf(+h.shares||0)} stk. · ${numf(+h.price||0)} ${cur}</div></div>
-                  <div className="end"><div className="num">${fmt(val)}</div>${gainPct != null && html`<div className=${"num small " + (gainPct >= 0 ? "pos" : "neg")}>${pctf(gainPct)}</div>`}</div>
+                  <div className="main"><div className="title">${h.name}</div><div className="sub">${numf(+h.shares||0)} stk. · ${numf(+h.price||0)} ${cur}${holdTotal > 0 ? ` · ${Math.round(val / holdTotal * 100)} %` : ""}</div></div>
+                  <div className="end"><div className="num">${fmt(val)}</div>${c ? html`<div className=${"num small " + (c.pct >= 0 ? "pos" : "neg")}>${chgText(c)}</div>` : html`<div className="num small faint">–</div>`}</div>
                 </button>
                 ${open && (h.source === "saxo" ? html`<div className="expand small muted">Hentet fra Saxo. Købskurs ${numf(+h.avgCost||0)} ${cur} · gevinst ${fmt(val - cost)}. Opdateres ved næste synkronisering.</div>` : html`<div className="expand stack">
                   <div className="grid2">
