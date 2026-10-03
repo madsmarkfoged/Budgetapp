@@ -1368,7 +1368,7 @@ function beginOAuth(provider) {
 // ---------------- app ----------------
 
 const PAGES = [
-  { id: "home", label: "Hjem", icon: "home" },
+  { id: "start", label: "Hjem", icon: "home" },
   { id: "tx", label: "Poster", icon: "list" },
   { id: "budget", label: "Budget", icon: "donut" },
   { id: "invest", label: "Invest.", icon: "trend" },
@@ -1404,7 +1404,7 @@ function App() {
   if (initial.current === null) initial.current = readStored();
   const init = initial.current;
 
-  const [page, setPage] = useState("home");
+  const [page, setPage] = useState("start");
   const [sub, setSub] = useState(null);
   const [transactions, setTransactions] = useState(init.transactions || []);
   const [budgets, setBudgets] = useState(init.budgets || DEFAULT_BUDGETS);
@@ -2250,6 +2250,42 @@ function App() {
   };
 
   // ================= pages =================
+
+  // Startside: where the app opens – pick where to go instead of landing on the net worth.
+  const StartPage = () => {
+    const ym = currentBudgetMonth(), st = monthStats(ym), left = totalBudget - st.exp, pay = nextPayday();
+    const go = (pg, sb = null) => { setPage(pg); setSub(sb); scrollToTop(); };
+    const today = new Date(), dateText = `${WEEKDAYS[today.getDay()]} ${today.getDate()}. ${MONTHS_DA[today.getMonth()]}`;
+    const todayMeal = shop.plan?.meals?.find((m, i) => mealState(i) === "now" && !m.done);
+    const owed = sharedPeople.map(w => [w, owedBy(w)]).filter(([, v]) => Math.abs(v) >= 1);
+    const foodLeft = (+budgets["Mad & dagligvarer"] || 0) - (st.byCat["Mad & dagligvarer"] || 0);
+    const tile = (icon, color, title, sub, onClick, wide = false) => html`<button className=${"start-tile" + (wide ? " wide" : "")} onClick=${onClick}>
+      <div className="si" style=${{background: color + "33", color: tint(color, 0.45)}}><${Icon} name=${icon} /></div>
+      <div style=${{minWidth:0, flex: wide ? 1 : "none"}}><div className="st">${title}</div><div className="ss">${sub}</div></div>
+    </button>`;
+    return html`<div>
+      <div className="start-head">
+        <div className="small muted">${dateText}</div>
+        <div style=${{marginTop:6, fontSize:15}}>${left >= 0 ? html`Du har <b className="pos">${fmt(left)}</b> tilbage at bruge` : html`Du er <b className="neg">${fmt(-left)}</b> over budget`} – løn om ${pay.days === 0 ? "i dag" : pay.days === 1 ? "1 dag" : `${pay.days} dage`}.</div>
+      </div>
+      ${syncChoice && html`<div className="tip tap" style=${{marginBottom:12}} onClick=${()=>go("home")}><div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="refresh" /></div><div>Der er data fra en anden enhed. Tryk for at vælge, hvilke der skal bruges.</div></div>`}
+      ${todayMeal && html`<button className="tip tap" style=${{width:"100%", textAlign:"left", font:"inherit", color:"inherit", marginBottom:12}} onClick=${()=>{ go("food"); setFoodTab("plan"); }}>
+        <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="food" /></div><div>I dag: <b>${todayMeal.name}</b></div></button>`}
+      <div className="start-grid">
+        ${tile("wallet", "#378ADD", "Overblik", `Formue ${fmt(netWorth)}`, () => go("home"))}
+        ${tile("donut", "#639922", "Budget", `${fmt(st.exp)} brugt af ${fmt(totalBudget)}`, () => go("budget"))}
+        ${tile("food", "#D85A30", "Mad", foodBadge ? (planEnded ? "Madplanen er slut" : "Nye tilbudsaviser") : `${fmt(foodLeft)} tilbage til mad`, () => go("food"))}
+        ${tile("list", "#7F77DD", "Poster", transactions[0] ? `${prettyName(transactions.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||""))[0].description)}` : "Ingen poster endnu", () => go("tx"))}
+        ${tile("trend", "#1D9E75", "Investeringer", invValue > 0 ? `${fmt(invValue)}` : "Forbind Saxo", () => go("invest"))}
+        ${tile("plane", "#EF9F27", "Rejsepulje", `${rejse.trips.length} ${rejse.trips.length === 1 ? "rejse" : "rejser"}`, () => go("more", "trips"))}
+        ${tile("repeat", "#534AB7", "Abonnementer", `${fmt(subsMonthly)} om måneden`, () => go("more", "subs"))}
+        ${tile("arrows", "#D4537E", "Delte udgifter", owed.length ? owed.map(([w, v]) => `${w} ${v > 0 ? "skylder" : "får"} ${fmt(Math.abs(v))}`).join(" · ") : "Ingen åbne udlæg", () => go("more", "shared"))}
+        ${tile("donut", "#185FA5", "Månedsrapport", monthName(prevMonth(ym)), () => { setReportMonth(null); go("more", "report"); })}
+        ${tile("school", "#3B8A6E", "SU-fribeløb", prefs.su?.limit ? "Se hvor tæt du er" : "Indtast dit fribeløb", () => go("more", "su"))}
+        ${tile("dots", "#888780", "Mere", "Bank, data, udseende og lås", () => go("more"), true)}
+      </div>
+    </div>`;
+  };
 
   const HomePage = () => {
     const ym = currentBudgetMonth();
@@ -4016,7 +4052,9 @@ function App() {
 
   // ================= shell =================
 
-  const pageTitle = page === "home" ? "Overblik"
+  const hour = new Date().getHours();
+  const pageTitle = page === "start" ? (hour < 10 ? "God morgen" : hour < 17 ? "Hej" : "God aften")
+    : page === "home" ? "Overblik"
     : page === "more" && sub ? MORE_PAGES.find(p => p.id === sub)?.label
     : page === "invest" ? "Investeringer"
     : page === "food" ? "Mad og tilbud"
@@ -4024,7 +4062,7 @@ function App() {
     : PAGES.find(p => p.id === page)?.label;
   const lastSync = [sync.bank, sync.saxo].filter(Boolean).sort().pop();
   const canSync = Boolean(ebSession?.session_id) || Boolean(saxoTokens);
-  const body = { home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, food: FoodPage, more: MorePage }[page]();
+  const body = { start: StartPage, home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, food: FoodPage, more: MorePage }[page]();
 
   if (locked && lock.on) return html`<div className="lock-screen">
     <div className="lock-inner">
@@ -4071,7 +4109,7 @@ function App() {
     ${(page === "home" || page === "tx") && !quick && html`<button className="fab" aria-label="Hurtig udgift" onClick=${()=>setQuick({ amt: "", cat: "Mad & dagligvarer", note: "", kind: "out" })}><${Icon} name="plus" /></button>`}
     ${msgs.quick && html`<div className="toast" role="status"><span>${msgs.quick}</span></div>`}
     <nav className="nav"><div className="nav-inner">
-      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); scrollToTop(); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
+      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id || (p.id === "start" && page === "home") ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); scrollToTop(); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
     </div></nav>
   </div>`;
 }

@@ -65,7 +65,7 @@
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; scrollbar-width: none; }
+html, body { margin: 0; scrollbar-width: none; }
 /* The app scrolls inside #root instead of the page itself, so the scroll indicator can be hidden (iOS shows
    one for the page that CSS can't remove). */
 #root { position: fixed; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: none; scrollbar-width: none; }
@@ -383,3 +383,14 @@ select.input { appearance: auto; }
 .sheet-backdrop { position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; animation: cookIn .2s ease both; }
 .sheet { width: 100%; max-width: 560px; background: var(--surface); border-radius: 20px 20px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 12px; }
 .quick-amt { font-size: 32px; font-weight: 700; text-align: center; padding: 14px; }
+
+/* Startside */
+.start-head { padding: 6px 2px 14px; }
+.start-head .hi { font-size: 26px; font-weight: 700; letter-spacing: -.4px; }
+.start-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.start-tile { background: var(--surface); border: 0; color: inherit; font: inherit; text-align: left; border-radius: var(--r-md, 16px); padding: 14px; display: flex; flex-direction: column; gap: 8px; min-height: 112px; cursor: pointer; min-width: 0; transition: transform .12s; }
+.start-tile:active { transform: scale(.97); }
+.start-tile .si { width: 36px; height: 36px; border-radius: 11px; display: flex; align-items: center; justify-content: center; }
+.start-tile .st { font-weight: 650; font-size: 15.5px; }
+.start-tile .ss { font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.start-tile.wide { grid-column: span 2; min-height: 0; flex-direction: row; align-items: center; }
