@@ -344,6 +344,10 @@ const MEAL_TEMPLATES = [
   ["Kalkunpasta med pesto og spinat", ["kalkun", "pasta", "pesto", "spinat"]],
   ["Kylling og broccoli i parmesanpasta", ["kylling", "pasta", "broccoli", "parmesan"]],
   ["Laksepasta med citron og spinat", ["laks", "pasta", "spinat", "skyr", "citron"]],
+  // Picked by the user from other recipe sites (see MEAL_SOURCE); the method is written in the app's own words.
+  ["Taco pastasalat med oksekød", ["hakket oksekød", "pasta", "kidneybønner", "peberfrugt", "rødløg", "majs", "cherrytomater", "salat", "cheddar", "løg", "tacokrydderi", "creme fraiche", "mayonnaise", "salsa", "lime"]],
+  ["Svensk pølseret (Gourministeriet)", ["pølser", "kartofler", "løg", "hvidløg", "paprika", "tomatpuré", "piskefløde", "ketchup", "purløg"]],
+  ["Mexicansk kartoffelfad med oksekød", ["hakket oksekød", "kartofler", "løg", "hvidløg", "peberfrugt", "tacokrydderi", "tomatpuré", "bouillon", "fløde", "kidneybønner", "cheddar", "creme fraiche"]],
 ];
 // Ingredients to pick from under "Retter", grouped like a shop.
 // Ingredients to pick from, grouped the way a Danish supermarket is laid out (also the shopping-list order).
@@ -380,7 +384,16 @@ const MEAL_STEPS = {
   "Tunpasta med cherrytomater": [20, ["Kog pastaen, og lad den dryppe af.", "Halvér cherrytomaterne, hak rødløget fint, og lad tunen dryppe af.", "Rør skyren med salt, peber og evt. lidt citron.", "Vend pasta, tun, tomater, rødløg og skyrsauce sammen. Retten kan spises lun eller kold."]],
   "Kalkunpasta med pesto og spinat": [25, ["Kog pastaen i godt saltet vand.", "Skær kalkunen i strimler, og steg den i lidt olie i 6–8 minutter.", "Vend spinaten i panden, til den falder sammen.", "Tilsæt pasta, pesto og lidt kogevand, og vend det hele sammen."]],
   "Kylling og broccoli i parmesanpasta": [25, ["Kog pastaen. Kom broccolibuketterne i gryden de sidste 3 minutter.", "Skær kyllingen i tern, og steg den i lidt olie i 6–8 minutter.", "Hæld pasta og broccoli fra, men gem 1 dl kogevand.", "Vend det hele sammen med revet parmesan og kogevandet til en cremet sauce. Smag til med peber."]],
+  "Taco pastasalat med oksekød": [30, ["Steg det hakkede løg klart i lidt olie på en pande.", "Tilsæt oksekødet, brun det godt, og rør tacokrydderiet i. Stil det til side.", "Dressing: Rør creme fraiche, mayonnaise og salsa sammen, og smag til med limesaft, salt og peber. Stil den på køl.", "Kog pastaen efter anvisningen, skyl den i koldt vand, og lad den dryppe af.", "Skær peberfrugt i tern, rødløg i strimler, halvér cherrytomaterne, og snit salaten. Skyl og dræn bønnerne.", "Bland pasta, grøntsager, bønner, majs, oksekød og revet cheddar i en stor skål, og vend dressingen i. Server gerne med tortillachips."]],
+  "Svensk pølseret (Gourministeriet)": [30, ["Kog kartoflerne, hvis de ikke er kogt i forvejen, og skær dem i tern. Skær pølserne i mundrette stykker.", "Smelt lidt smør og olie på en stor pande, og steg hakket løg og hvidløg, til løget er klart.", "Rør paprika (og evt. et nip chili) og tomatpuré i, og lad det stege et par minutter.", "Kom pølserne på panden, og brun dem i ca. 5 minutter.", "Tilsæt kartofler, fløde og ketchup. Varm retten igennem ved middelvarme i ca. 10 minutter – lad den ikke koge kraftigt, så kartoflerne holder formen.", "Smag til med salt og peber (og lidt mere fløde, hvis der mangler sauce), og drys purløg over."]],
+  "Mexicansk kartoffelfad med oksekød": [50, ["Kog de skrællede kartofler i saltet vand i 8–10 minutter, til de næsten er møre. Hæld vandet fra.", "Brun oksekødet i lidt olie på en pande eller i en gryde.", "Tilsæt hakket løg, hvidløg og peberfrugt i tern (og evt. et par hakkede jalapeños), og steg, til løget er klart.", "Rør tacokrydderi og tomatpuré i, og krydr med salt og peber.", "Hæld bouillon og fløde i, og lad det simre i ca. 5 minutter. Rør de drænede bønner i.", "Skær kartoflerne i skiver. Læg halvdelen i et smurt ovnfast fad, så halvdelen af kødsaucen, og gentag.", "Drys cheddar over, og bag retten ved 200 grader i ca. 25 minutter.", "Lad den hvile i 10 minutter, og server med creme fraiche."]],
   "Laksepasta med citron og spinat": [25, ["Kog pastaen i godt saltet vand.", "Skær laksen i tern, og steg den forsigtigt i 3–4 minutter.", "Vend spinaten i panden, til den falder sammen.", "Rør skyren med revet citronskal, saften af ½ citron, salt og peber.", "Vend pasta, laks og sauce sammen ved lav varme."]],
+};
+// Where a starter meal comes from, when it's based on a recipe the user picked on another site.
+const MEAL_SOURCE = {
+  "Taco pastasalat med oksekød": { site: "Gourministeriet", url: "https://gourministeriet.dk/taco-pastasalat-med-oksekoed/" },
+  "Svensk pølseret (Gourministeriet)": { site: "Gourministeriet", url: "https://gourministeriet.dk/svensk-poelseret/" },
+  "Mexicansk kartoffelfad med oksekød": { site: "Gourministeriet", url: "https://gourministeriet.dk/mexicansk-kartoffelfad-med-oksekoed-og-groentsager/" },
 };
 // Valdemarsro dinners to pick from under Retter. Only names and links live here (the repo is public): the
 // ingredients are fetched through the worker when the user adds one, and the method when they open it.
@@ -517,6 +530,9 @@ const MEAL_AMOUNTS = {
   "Tunpasta med cherrytomater": [4, { "tun": [3, "dåse"], "pasta": [400, "g"], "cherrytomater": [250, "g"], "rødløg": [1, "stk"], "skyr": [300, "g"] }],
   "Kalkunpasta med pesto og spinat": [4, { "kalkun": [600, "g"], "pasta": [400, "g"], "pesto": [130, "g"], "spinat": [150, "g"] }],
   "Kylling og broccoli i parmesanpasta": [4, { "kylling": [600, "g"], "pasta": [400, "g"], "broccoli": [500, "g"], "parmesan": [60, "g"] }],
+  "Taco pastasalat med oksekød": [4, { "hakket oksekød": [400, "g"], "pasta": [300, "g"], "kidneybønner": [1, "dåse"], "peberfrugt": [1, "stk"], "rødløg": [1, "stk"], "majs": [140, "g"], "cherrytomater": [150, "g"], "salat": [1, "stk"], "cheddar": [100, "g"], "løg": [1, "stk"], "tacokrydderi": [1, "stk"], "creme fraiche": [150, "g"], "mayonnaise": [100, "g"], "salsa": [230, "g"], "lime": [1, "stk"] }],
+  "Svensk pølseret (Gourministeriet)": [4, { "pølser": [8, "stk"], "kartofler": [800, "g"], "løg": [1, "stk"], "hvidløg": [2, "fed"], "paprika": [3, "tsk"], "tomatpuré": [100, "g"], "piskefløde": [3, "dl"], "ketchup": [1, "spsk"], "purløg": [1, "stk"] }],
+  "Mexicansk kartoffelfad med oksekød": [4, { "hakket oksekød": [500, "g"], "kartofler": [800, "g"], "løg": [1, "stk"], "hvidløg": [3, "fed"], "peberfrugt": [2, "stk"], "tacokrydderi": [3, "spsk"], "tomatpuré": [3, "spsk"], "bouillon": [2, "dl"], "fløde": [2, "dl"], "kidneybønner": [1, "dåse"], "cheddar": [80, "g"], "creme fraiche": [100, "g"] }],
   "Laksepasta med citron og spinat": [4, { "laks": [500, "g"], "pasta": [400, "g"], "spinat": [150, "g"], "skyr": [300, "g"], "citron": [1, "stk"] }],
 };
 // Per ingredient: typical pack size in g/ml (pack), weight of one piece/can (piece) and protein per 100 g (p).
@@ -2628,7 +2644,7 @@ function App() {
 
   // All dinners the planner may use: the starter meals (with the user's edits) plus their own, minus any skipped.
   const allMeals = [
-    ...MEAL_TEMPLATES.map(([name, ingredients]) => (shop.meals || []).find(m => m.name === name) || { id: "tpl:" + name, name, ingredients, template: true }),
+    ...MEAL_TEMPLATES.map(([name, ingredients]) => (shop.meals || []).find(m => m.name === name) || { id: "tpl:" + name, name, ingredients, template: true, url: MEAL_SOURCE[name]?.url || null }),
     ...(shop.meals || []).filter(m => !MEAL_TEMPLATES.some(([n]) => n === m.name)),
   ];
   const mealPool = allMeals.filter(m => !m.skip && m.ingredients?.length);
@@ -2948,7 +2964,7 @@ function App() {
   // "Se opskrift": the method is fetched the first time and kept with the meal (on this device only).
   const openCook = async (m, portions = null) => {
     setCookFor(m.name); setCookDone([]); setCookPortions(portions);
-    if (m.steps?.length || !m.url) return;
+    if (m.steps?.length || !m.url || MEAL_STEPS[m.name]) return;
     setCookLoading(true);
     try { storeMeal(await fetchMeal(m.url), m); }
     catch (e) { flash("cook", "Fejl: " + (e.message || e), 9000); }
@@ -2987,6 +3003,7 @@ function App() {
           : html`<div className="card empty">${m.url ? "Fremgangsmåden kunne ikke hentes. Opdater workeren i Cloudflare, eller åbn den originale opskrift." : "Retten har ikke noget link til en opskrift. Tilføj et under Retter, eller vælg en ret fra Valdemarsro."}</div>`}
         <${Msg} k="cook" />
         ${m.url?.includes("valdemarsro") && html`<div className="small faint" style=${{marginTop:16}}>Opskrift fra Valdemarsro.dk – vist til eget brug. Se den originale opskrift for billeder og tips.</div>`}
+        ${MEAL_SOURCE[m.name] && html`<div className="small faint" style=${{marginTop:16}}>Baseret på en opskrift fra ${MEAL_SOURCE[m.name].site}. Fremgangsmåden er skrevet kort her – se den originale opskrift for alle detaljer.</div>`}
       </div>
     </div>`;
   };
@@ -3079,7 +3096,7 @@ function App() {
         <button className="icon-btn" style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name}: yndlingsret`} disabled=${m.skip}
           onClick=${()=>update(m, { fav: !m.fav })}>${m.fav ? "♥" : "♡"}</button>
         <div className="main">
-          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${proteinChip(mealProtein(m))}${(m.up || m.down) ? html` <span className="small muted" style=${{fontWeight:400}}>${m.up ? ` 👍${m.up}` : ""}${m.down ? ` 👎${m.down}` : ""}</span>` : null}${m.minutes ? html` <span className="small muted" style=${{fontWeight:400}}>· ${m.minutes} min.</span>` : null}</div>
+          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${proteinChip(mealProtein(m))}${(m.up || m.down) ? html` <span className="small muted" style=${{fontWeight:400}}>${m.up ? ` 👍${m.up}` : ""}${m.down ? ` 👎${m.down}` : ""}</span>` : null}${m.minutes ? html` <span className="small muted" style=${{fontWeight:400}}>· ${m.minutes} min.</span>` : null}${MEAL_SOURCE[m.name] ? html` <span className="small muted" style=${{fontWeight:400}}>· ${MEAL_SOURCE[m.name].site}</span>` : m.url?.includes("valdemarsro") ? html` <span className="small muted" style=${{fontWeight:400}}>· Valdemarsro</span>` : null}</div>
           ${m.skip
             ? html`<div className="sub">Kommer ikke med i madplanen</div>`
             : html`<div style=${{display:"flex", flexWrap:"wrap", gap:5, marginTop:6}}>
