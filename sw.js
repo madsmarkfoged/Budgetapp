@@ -1,5 +1,5 @@
 // Bump CACHE when you deploy changes, so installed apps pick up the new files.
-const CACHE = "okonomi-v38";
+const CACHE = "okonomi-v39";
 const CDN = "https://esm.sh";
 const APP_FILES = [
   "./", "index.html", "app.js", "styles.css", "manifest.webmanifest",
@@ -47,4 +47,15 @@ self.addEventListener("fetch", (e) => {
       }).catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match("index.html")))
     );
   }
+});
+
+// Push notifications from the worker (payday, madplan ending, new weekly offers).
+self.addEventListener("push", (e) => {
+  let d = { title: "Økonomi", body: "" };
+  try { d = e.data ? e.data.json() : d; } catch {}
+  e.waitUntil(self.registration.showNotification(d.title, { body: d.body, icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: d.tag || undefined, data: { url: d.url || "./" } }));
+});
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((ws) => ws.length ? ws[0].focus() : self.clients.openWindow(e.notification.data?.url || "./")));
 });

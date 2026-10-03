@@ -91,6 +91,12 @@ Appen kan dele de samme data mellem dine enheder via workeren. Data krypteres p�
 
 Status ses under **Mere → Data og backup**.
 
+## 6. Notifikationer (valgfrit, kræver afsnit 5)
+
+1. Lav et nøglepar til Web Push (ECDSA P-256) og læg den private nøgle som JWK-JSON i en ny **Secret** på workeren: `VAPID_PRIVATE`.
+2. Workeren → **Settings → Trigger events → + Add → Cron trigger** → `0 * * * *` (hver time).
+3. I appen: **Mere → Notifikationer → Slå notifikationer til** (på iPhone fra ikonet på hjemmeskærmen) og **Send en test**.
+
 ## Til daglig
 
 - Banken synkroniseres automatisk, når du åbner appen (højst hver 8. time), og når du trykker ↻ øverst.

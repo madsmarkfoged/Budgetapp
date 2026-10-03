@@ -1309,6 +1309,25 @@ async function callBridge(path, body = {}) {
 }
 
 const redirectUrl = () => location.origin + location.pathname;
+// ---------------- Face ID lock (WebAuthn passkey on this device) ----------------
+// A privacy curtain: the app asks for Face ID/Touch ID before showing anything. The passkey never leaves the
+// device; the data itself isn't encrypted by it (that's what the phone's own lock is for).
+const LOCK_KEY = "app_lock";        // {credId, on, after (minutes in background before locking)}
+const randomBytes = (n) => crypto.getRandomValues(new Uint8Array(n));
+async function createLockCredential() {
+  const cred = await navigator.credentials.create({ publicKey: {
+    challenge: randomBytes(32), rp: { name: "Økonomi" },
+    user: { id: randomBytes(16), name: "okonomi-app", displayName: "Økonomi-appen" },
+    pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+    authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "discouraged" }, timeout: 60000,
+  } });
+  return toB64(cred.rawId);
+}
+async function verifyLock(credId) {
+  await navigator.credentials.get({ publicKey: { challenge: randomBytes(32), allowCredentials: [{ type: "public-key", id: fromB64(credId) }], userVerification: "required", timeout: 60000 } });
+}
+const PUSH_KEY = "push_on";         // this device has turned notifications on
+const urlB64ToBytes = (s) => fromB64(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
 // The app scrolls inside #root (see styles.css), not the window.
 const scrollToTop = () => document.getElementById("root")?.scrollTo(0, 0);
 
@@ -1364,10 +1383,12 @@ const MORE_PAGES = [
   { id: "report", label: "Månedsrapport", icon: "donut", sub: "Måneden opsummeret" },
   { id: "trends", label: "Udvikling", icon: "trend", sub: "Kategorierne over de sidste måneder" },
   { id: "su", label: "SU-fribeløb", icon: "school", sub: "Hvor meget du må tjene ved siden af" },
+  { id: "shared", label: "Delte udgifter", icon: "arrows", sub: "Hvem skylder hvem" },
+  { id: "notify", label: "Notifikationer", icon: "bulb", sub: "Løn, madplan og nye tilbud" },
   { id: "connections", label: "Bankforbindelser", icon: "bank", sub: "Sparekassen Kronjylland og Saxo" },
   { id: "ai", label: "AI-analyse", icon: "spark", sub: "Råd baseret på dine tal" },
   { id: "import", label: "Import og værktøjer", icon: "upload", sub: "CSV, fast husleje, kategorier" },
-  { id: "appearance", label: "Udseende", icon: "sun", sub: "Mørk, lys eller system" },
+  { id: "appearance", label: "Udseende og lås", icon: "sun", sub: "Mørk/lys og Face ID-lås" },
   { id: "apikey", label: "Claude API-nøgle", icon: "key", sub: "Til AI-analyse og kurser" },
   { id: "data", label: "Data og backup", icon: "db", sub: "Eksportér og importér" },
 ];
@@ -1405,6 +1426,14 @@ function App() {
   const [affordOpen, setAffordOpen] = useState(false);
   const [affordAmt, setAffordAmt] = useState("");
   const [reportMonth, setReportMonth] = useState(null);
+  const [lock, setLock] = useState(() => store.json(LOCK_KEY) || {});
+  const [locked, setLocked] = useState(() => !!store.json(LOCK_KEY)?.on);
+  const [lockMsg, setLockMsg] = useState("");
+  const [lockSecret, setLockSecret] = useState("");
+  const [pushInfo, setPushInfo] = useState(() => ({ on: store.get(PUSH_KEY) === "1", msg: "" }));
+  const [quick, setQuick] = useState(null);           // quick expense sheet: {amt, cat, note, kind}
+  const [shareDraft, setShareDraft] = useState({ who: "", desc: "", amt: "", paidBy: "me", split: "half" });
+  const [shareFor, setShareFor] = useState(null);     // transaction id being shared from Poster
   const [renameSub, setRenameSub] = useState(null);
   const [shop, setShop] = useState(init.shop || DEFAULT_SHOP);
   const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
@@ -1661,6 +1690,33 @@ function App() {
       return [...h, p].slice(-1500);
     });
   }, [invValue, invCost, invPutIn, askValue]);
+
+  // ---------- Face ID lock ----------
+  const unlock = async () => {
+    setLockMsg("");
+    try { await verifyLock(lock.credId); setLocked(false); }
+    catch (e) { setLockMsg(e?.name === "NotAllowedError" ? "Ikke låst op. Prøv igen." : "Face ID kunne ikke bruges: " + (e.message || e)); }
+  };
+  useEffect(() => {
+    if (!lock.on) return;
+    let hiddenAt = 0;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") hiddenAt = Date.now();
+      else if (hiddenAt && Date.now() - hiddenAt > (lock.after ?? 1) * 60000) setLocked(true);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [lock.on, lock.after]);
+  const setLockOn = async (on) => {
+    if (!on) { store.remove(LOCK_KEY); setLock({}); flash("lock", "Låsen er slået fra på denne enhed."); return; }
+    try {
+      const credId = await createLockCredential();
+      const l = { credId, on: true, after: 1 };
+      store.setJson(LOCK_KEY, l); setLock(l); flash("lock", "Låsen er slået til. Appen beder om Face ID, når den har været lukket i mere end et minut.");
+    } catch (e) { flash("lock", "Fejl: Face ID kunne ikke sættes op (" + (e.message || e.name) + ").", 9000); }
+  };
+  // Opening the app with ?add=1 (a home-screen shortcut) goes straight to a quick expense.
+  useEffect(() => { if (new URLSearchParams(location.search).get("add")) setQuick({ amt: "", cat: "Mad & dagligvarer", note: "", kind: "out" }); }, []);
 
   const recurringIn = detectRecurring(transactions, 1);
   const subscriptionsRaw = detectSubscriptions(transactions, subsHidden);
@@ -2177,6 +2233,8 @@ function App() {
           <option value="">Ingen</option>
           ${rejse.trips.map(tr => html`<option key=${tr.id} value=${tr.id}>${tr.name}</option>`)}
         </select></label>`}
+        ${t.amount < 0 && (shareFor === t.id ? SharedForm(t) : html`<button className="btn soft" onClick=${()=>{ setShareFor(t.id); setShareDraft({ who: "", desc: prettyName(t.description), amt: String(Math.abs(t.amount)), paidBy: "me", split: "half" }); }}>Del med en ven</button>`)}
+        <${Msg} k="tx" />
         <div className="btns"><button className="btn danger" onClick=${()=>deleteTx(t.id)}><${Icon} name="trash" /> Slet</button><button className="btn" onClick=${()=>setOpenTx(null)}>Luk</button></div>
       </div>`}
     </div>`;
@@ -2873,8 +2931,135 @@ function App() {
     </div>`;
   };
 
+  // ---------- Notifikationer ----------
+  const enablePush = async () => {
+    setPushInfo(p => ({ ...p, msg: "" }));
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) throw new Error(/iPhone|iPad/.test(navigator.userAgent) ? "Åbn appen fra ikonet på hjemmeskærmen (ikke i Safari) – så kan den få notifikationer." : "Denne browser understøtter ikke notifikationer.");
+      if (await Notification.requestPermission() !== "granted") throw new Error("Du skal tillade notifikationer, når telefonen spørger.");
+      const { key } = await callBridge("/push/key", {});
+      const reg = await navigator.serviceWorker.ready;
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToBytes(key) });
+      await callBridge("/push/subscribe", { subscription: sub.toJSON(), device: deviceName() });
+      store.set(PUSH_KEY, "1"); store.remove("push_sched");
+      setPushInfo({ on: true, msg: "Notifikationer er slået til på denne enhed." });
+    } catch (e) { setPushInfo(p => ({ ...p, msg: "Fejl: " + (e.code === "no_vapid" ? "workeren mangler nøglen til notifikationer (VAPID_PRIVATE)." : e.message || e) })); }
+  };
+  const disablePush = async () => {
+    try { const reg = await navigator.serviceWorker.ready; await (await reg.pushManager.getSubscription())?.unsubscribe(); } catch {}
+    store.remove(PUSH_KEY); setPushInfo({ on: false, msg: "Notifikationer er slået fra på denne enhed." });
+  };
+  const NotifyPage = () => html`<div className="card stack">
+    <div className="small muted">Få en besked på telefonen, når lønnen kommer, når madplanen er slut, og når der er nye tilbudsaviser i dine butikker. På iPhone virker det kun, når appen er åbnet fra ikonet på hjemmeskærmen.</div>
+    ${pushInfo.on
+      ? html`<div className="small pos">Slået til på denne enhed.</div>
+          <div className="btns"><button className="btn soft" onClick=${async ()=>{ try { const r = await callBridge("/push/test", {}); setPushInfo(p => ({ ...p, msg: `Testbesked sendt til ${r.sent} ${r.sent === 1 ? "enhed" : "enheder"}.` })); } catch (e) { setPushInfo(p => ({ ...p, msg: "Fejl: " + e.message })); } }}>Send en test</button>
+          <button className="btn" onClick=${disablePush}>Slå fra</button></div>`
+      : html`<button className="btn primary" onClick=${enablePush}>Slå notifikationer til</button>`}
+    ${pushInfo.msg && html`<div className=${"small " + (pushInfo.msg.startsWith("Fejl") ? "neg" : "")}>${pushInfo.msg}</div>`}
+    <div className="small faint">Beskederne sendes af din worker en gang i timen. Den kender kun tidspunkt og tekst – ikke dine tal.</div>
+  </div>`;
+
+  // ---------- Delte udgifter ----------
+  const shared = prefs.shared || { items: [] };
+  const setShared = (items) => setPrefs(pr => ({ ...pr, shared: { ...(pr.shared || {}), items } }));
+  const sharedPeople = [...new Set(shared.items.map(x => x.who))];
+  const owedBy = (who) => shared.items.filter(x => x.who === who && !x.settled).reduce((s, x) => s + x.amount, 0); // + = they owe me
+  const addShared = (d, tx = null) => {
+    const amt = Math.abs(parseFloat(String(d.amt).replace(",", ".")) || 0), who = d.who.trim();
+    if (!who || !amt) return false;
+    const part = d.split === "half" ? amt / 2 : amt;
+    const item = { id: uid(), who, desc: d.desc.trim() || "Udlæg", amount: d.paidBy === "me" ? part : -part, date: tx?.date || isoDate(new Date()), txId: tx?.id || null, settled: false };
+    setShared([item, ...shared.items]);
+    if (tx && d.paidBy === "me" && d.split === "half") editTx(tx.id, { delt: true });
+    setShareDraft({ who, desc: "", amt: "", paidBy: "me", split: "half" });
+    return true;
+  };
+  const shareRequest = async (who) => {
+    const open = shared.items.filter(x => x.who === who && !x.settled), sum = owedBy(who);
+    const text = `Hej ${who}! ${sum >= 0 ? `Du skylder mig ${fmtKr(sum)}` : `Jeg skylder dig ${fmtKr(-sum)}`}:\n` + open.map(x => `- ${x.desc} (${shortDate(x.date)}): ${fmtKr(Math.abs(x.amount))}`).join("\n") + (sum > 0 ? "\n\nSend gerne på MobilePay 🙏" : "");
+    try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); flash("shared", "Beskeden er kopieret."); } } catch {}
+  };
+  const SharedPage = () => {
+    // A recent payment in whose text has the person's name and the open amount: probably them paying back.
+    const paidBack = (who) => { const sum = owedBy(who); if (sum <= 0) return null; const n = who.toLowerCase().split(" ")[0];
+      return transactions.find(t => t.amount > 0 && t.date >= addDays(isoDate(new Date()), -45) && (t.description || "").toLowerCase().includes(n) && Math.abs(t.amount - sum) <= Math.max(5, sum * 0.05)); };
+    return html`<div>
+      ${sharedPeople.filter(w => Math.abs(owedBy(w)) >= 0.5).length === 0 && html`<div className="card empty">Ingen åbne udlæg. Tilføj et nedenfor, eller tryk <b>Del med en ven</b> på en post under Poster.</div>`}
+      <div className="stack-gap">${sharedPeople.map(who => { const sum = owedBy(who), open = shared.items.filter(x => x.who === who && !x.settled); if (!open.length) return null; const pb = paidBack(who);
+        return html`<div key=${who} className="card stack">
+          <div style=${{display:"flex", alignItems:"baseline", gap:8}}><b style=${{flex:1, fontSize:17}}>${who}</b><span className=${"num " + (sum >= 0 ? "pos" : "neg")} style=${{fontWeight:650}}>${sum >= 0 ? `skylder dig ${fmt(sum)}` : `du skylder ${fmt(-sum)}`}</span></div>
+          <div className="list">${open.map(x => html`<div key=${x.id} className="row" style=${{minHeight:42}}>
+            <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${x.desc}</div><div className="sub">${shortDate(x.date)} · ${x.amount >= 0 ? "du lagde ud" : `${who} lagde ud`}</div></div>
+            <div className="end"><span className="num">${fmt(Math.abs(x.amount))}</span> <button className="link-btn small" aria-label=${`Fjern ${x.desc}`} onClick=${()=>setShared(shared.items.filter(y => y.id !== x.id))}>✕</button></div>
+          </div>`)}</div>
+          ${pb && html`<div className="small">Betalt? ${fmt(pb.amount)} fra "${prettyName(pb.description)}" d. ${shortDate(pb.date)}.</div>`}
+          <div className="btns"><button className="btn soft" onClick=${()=>shareRequest(who)}>${sum >= 0 ? "Anmod" : "Del oversigt"}</button><button className="btn" onClick=${()=>setShared(shared.items.map(x => x.who === who ? { ...x, settled: true } : x))}>Markér som afregnet</button></div>
+        </div>`; })}</div>
+      <${Msg} k="shared" />
+      <div className="section">
+        <div className="section-head"><h2>Nyt udlæg</h2></div>
+        ${SharedForm(null)}
+      </div>
+    </div>`;
+  };
+  const SharedForm = (tx) => html`<form className="card stack" onSubmit=${e=>{ e.preventDefault(); if (addShared(shareDraft, tx)) { setShareFor(null); flash(tx ? "tx" : "shared", "Udlægget er gemt under Mere → Delte udgifter."); } }}>
+    <input className="input" list="shared-people" value=${shareDraft.who} onChange=${e=>setShareDraft({...shareDraft, who: e.target.value})} placeholder="Hvem? fx Jens" aria-label="Person" />
+    <datalist id="shared-people">${sharedPeople.map(w => html`<option key=${w} value=${w} />`)}</datalist>
+    ${!tx && html`<div className="grid2">
+      <input className="input" value=${shareDraft.desc} onChange=${e=>setShareDraft({...shareDraft, desc: e.target.value})} placeholder="Hvad? fx pizza" aria-label="Beskrivelse" />
+      <input className="input" inputMode="decimal" value=${shareDraft.amt} onChange=${e=>setShareDraft({...shareDraft, amt: e.target.value})} placeholder="Beløb i alt" aria-label="Beløb" />
+    </div>`}
+    <div className="seg">${[["me", "Jeg lagde ud"], ["them", "De lagde ud"]].map(([v, l]) => html`<button key=${v} type="button" className=${shareDraft.paidBy === v ? "on" : ""} onClick=${()=>setShareDraft({...shareDraft, paidBy: v})}>${l}</button>`)}</div>
+    <div className="seg">${[["half", "Del lige"], ["all", "Hele beløbet"]].map(([v, l]) => html`<button key=${v} type="button" className=${shareDraft.split === v ? "on" : ""} onClick=${()=>setShareDraft({...shareDraft, split: v})}>${l}</button>`)}</div>
+    <button className="btn primary" type="submit" disabled=${!shareDraft.who.trim() || !(tx || parseFloat(shareDraft.amt))}>Gem udlæg</button>
+  </form>`;
+
+  // ---------- Hurtig udgift ----------
+  const QUICK_CATS = ["Mad & dagligvarer", "Restaurant & café", "Transport", "Shopping", "Underholdning", "Sundhed & fitness", "Andet"];
+  const saveQuick = () => {
+    const amt = Math.abs(parseFloat(String(quick.amt).replace(/\./g, "").replace(",", ".")) || 0);
+    if (!amt) return;
+    const t = { id: uid(), date: isoDate(new Date()), description: quick.note.trim() || (quick.kind === "in" ? "Indbetaling (kontant)" : `${quick.cat} (kontant)`), amount: quick.kind === "in" ? amt : -amt,
+      category: quick.kind === "in" ? "Anden indkomst" : quick.cat, manualCategory: true, localDate: true, source: "manual" };
+    setTransactions([t, ...transactions]); setQuick(null);
+    if (new URLSearchParams(location.search).get("add")) history.replaceState(null, "", location.pathname);
+    flash("quick", `${fmt(t.amount)} er gemt under ${t.category}.`);
+  };
+  const QuickSheet = () => html`<div className="sheet-backdrop" onClick=${e=>{ if (e.target === e.currentTarget) setQuick(null); }}>
+    <form className="sheet" onSubmit=${e=>{ e.preventDefault(); saveQuick(); }}>
+      <div style=${{display:"flex", alignItems:"center"}}><b style=${{flex:1, fontSize:18}}>Hurtig ${quick.kind === "in" ? "indbetaling" : "udgift"}</b><button type="button" className="icon-btn" aria-label="Luk" onClick=${()=>setQuick(null)}>✕</button></div>
+      <input className="input quick-amt" inputMode="decimal" autoFocus value=${quick.amt} onChange=${e=>setQuick({...quick, amt: e.target.value})} placeholder="0 kr." aria-label="Beløb" />
+      <div className="seg">${[["out", "Udgift"], ["in", "Indbetaling"]].map(([v, l]) => html`<button key=${v} type="button" className=${quick.kind === v ? "on" : ""} onClick=${()=>setQuick({...quick, kind: v})}>${l}</button>`)}</div>
+      ${quick.kind === "out" && html`<div style=${{display:"flex", flexWrap:"wrap", gap:6}}>${QUICK_CATS.map(c => html`<button key=${c} type="button" className=${"chip " + (quick.cat === c ? "info" : "")} style=${quick.cat === c ? {} : {border:"1px solid var(--border)"}} onClick=${()=>setQuick({...quick, cat: c})}>${SHORT_CAT[c] || c}</button>`)}</div>`}
+      <input className="input" value=${quick.note} onChange=${e=>setQuick({...quick, note: e.target.value})} placeholder="Note (valgfri), fx kaffe" aria-label="Note" />
+      <button className="btn primary block" type="submit" disabled=${!parseFloat(String(quick.amt).replace(",", "."))}>Gem</button>
+      <div className="small faint">Til kontantkøb. Køb med kort og MobilePay kommer selv fra banken.</div>
+    </form>
+  </div>`;
+
   const detectedStores = usualStores(transactions);
   const shopStores = shop.stores || (detectedStores.length ? detectedStores : ["REMA 1000", "Netto", "Lidl"]);
+  // What to be told about, worked out here (the worker can't read the data) and sent to the worker, which
+  // delivers each one when it's due: payday at 8, the morning after the madplan ends, plus new weekly offers.
+  useEffect(() => {
+    if (store.get(PUSH_KEY) !== "1") return;
+    const items = [];
+    const at = (d, h) => { const x = new Date(d); x.setHours(h, 0, 0, 0); return x.getTime(); };
+    for (const k of [0, 1]) {
+      const n = new Date(); const pd = paydayIn(n.getFullYear(), n.getMonth() + k);
+      if (at(pd, 8) > Date.now()) items.push({ id: `pay-${isoDate(pd)}`, at: at(pd, 8), title: "Løn i dag 💰", body: `Rapporten for ${MONTHS_DA[pd.getMonth()]} er klar i appen, og budgettet starter forfra.` });
+    }
+    if (shop.plan?.created && shop.plan.meals?.length) {
+      const end = parseDKDate(addDays(shop.plan.created, (shop.plan.cookNights ?? shop.plan.nights)));
+      if (at(end, 10) > Date.now()) items.push({ id: `plan-${shop.plan.created}`, at: at(end, 10), title: "Madplanen er slut 🍽", body: "Tryk for at lave en ny madplan ud fra ugens tilbud." });
+    }
+    const watch = { term: (shop.staples || [])[0] || "kylling", stores: shopStores, lat: shop.lat, lng: shop.lng };
+    const sig = JSON.stringify({ items, watch });
+    if (store.get("push_sched") === sig) return;
+    callBridge("/push/schedule", { items, watch }).then(() => store.set("push_sched", sig)).catch(() => {});
+  }, [shop.plan?.created, shop.plan?.nights, shopStores.join(","), pushInfo.on]);
+
   const StoresBlock = () => {
     const toggleStore = (c) => setShop({...shop, stores: shopStores.includes(c) ? shopStores.filter(x => x !== c) : [...shopStores, c]});
     const useLocation = () => navigator.geolocation?.getCurrentPosition(
@@ -3086,7 +3271,7 @@ function App() {
     <span className="num" style=${{minWidth:22, textAlign:"center", fontWeight:600}}>${value}</span>
     <button className="icon-btn" aria-label=${`${label}: flere`} disabled=${value >= max} onClick=${()=>onSet(value + 1)}>+</button>
   </div>`;
-  const macroLine = (mc) => mc && mc.kcal ? html`<div className="small muted" style=${{marginTop:2}}>ca. ${mc.kcal} kcal · ${mc.p} g protein · ${mc.f} g fedt · ${mc.c} g kulhydrat pr. portion</div>` : null;
+  const macroLine = (mc) => mc && mc.kcal ? html`<div className="small muted" style=${{marginTop:2}}>ca. ${mc.kcal} kcal · ${mc.p} g protein${+prefs.proteinGoal ? ` (${Math.round(mc.p / +prefs.proteinGoal * 100)} % af dagsmålet)` : ""} · ${mc.f} g fedt · ${mc.c} g kulhydrat pr. portion</div>` : null;
   const proteinChip = (p) => p == null ? null : html` <span className=${"chip " + (p >= 30 ? "info" : "")} style=${{fontSize:11, padding:"1px 7px", ...(p >= 30 ? {} : {border:"1px solid var(--border)"})}}>${p >= 30 ? "Proteinrig · " : ""}${p} g protein</span>`;
   const amountOf = (it, portions) => it.amt ? fmtAmount(it.amt[0] * portions, it.amt[1]) : it.per ? fmtAmount(it.per * portions, "g") : "";
   const qtyText = (b) => `${b.packs} ${b.packs === 1 ? "pakke" : "pakker"}${b.u && b.q ? ` · ${fmtAmount(b.q, b.u)}` : b.g ? ` · ca. ${fmtAmount(b.g, "g")}` : ""}`;
@@ -3143,6 +3328,10 @@ function App() {
           <input type="checkbox" style=${{width:20, height:20, accentColor:"var(--accent)"}} checked=${shop.preferProtein !== false} onChange=${e=>setShop(s => ({...s, preferProtein: e.target.checked}))} />
           Vælg helst proteinrige retter
         </label>
+        <label style=${{display:"flex", alignItems:"center", gap:10}} className="small">
+          <span style=${{flex:1}}>Dagligt proteinmål</span>
+          <input className="input sm" style=${{width:80, textAlign:"right"}} type="number" inputMode="numeric" value=${prefs.proteinGoal ?? ""} placeholder="fx 150" onChange=${e=>setPrefs(pr => ({ ...pr, proteinGoal: e.target.value }))} aria-label="Dagligt proteinmål i gram" /> g
+        </label>
         <div>
           <div className="small" style=${{marginBottom:6}}>Faste varer hver uge</div>
           <div style=${{display:"flex", flexWrap:"wrap", gap:6, alignItems:"center"}}>
@@ -3161,6 +3350,14 @@ function App() {
           <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="cart" /></div>
           <div>${plan.meals.length ? html`Gå i <b>${plan.stores.join(" og ")}</b>. Indkøbet koster ca. <b>${kr(Math.round(plan.total))}</b>${plan.normal > plan.total ? html` – du sparer ca. <b className="pos">${kr(Math.round(plan.normal - plan.total))}</b> mod normalpris` : ""}` : "Fryseren rækker til alle aftenerne – du skal ikke købe ind til aftensmad."}</div>
         </div>
+        ${(() => { const goal = +prefs.proteinGoal || 0, ps = plan.meals.map(m => m.macros?.p ?? m.protein).filter(x => x > 0);
+          if (!goal || !ps.length) return null;
+          const avg = Math.round(ps.reduce((a, b) => a + b, 0) / ps.length), rest = Math.max(0, goal - avg), pct = Math.min(100, avg / goal * 100);
+          return html`<div className="card stack" style=${{marginTop:8, gap:8}}>
+            <div style=${{display:"flex", justifyContent:"space-between", gap:10}} className="small"><span>Aftensmaden giver i snit <b>${avg} g protein</b> om dagen</span><span className="muted">mål ${goal} g</span></div>
+            <div className="bar" style=${{height:8}}><div style=${{width:`${pct}%`, background:"var(--accent)"}}></div></div>
+            <div className="small muted">${rest > 0 ? html`Du mangler ca. <b>${rest} g</b> fra morgenmad, frokost og mellemmåltider – fx 250 g skyr (25 g), 100 g kyllingepålæg (23 g), 3 æg (19 g) eller 100 g hytteost (13 g).` : "Aftensmaden dækker hele dit mål. 💪"}</div>
+          </div>`; })()}
         ${bought.length > 0 && html`<div className="small" style=${{margin:"8px 2px 0"}}>Siden ${shortDate(plan.created)} har du købt mad for <b className=${spent > plan.total * 1.15 ? "neg" : ""}>${fmt(spent)}</b> (${bought.length} køb) – planen regnede med ca. ${fmt(Math.round(plan.total))}</div>`}
         ${plan.swapped && html`<div className="small faint" style=${{margin:"8px 2px 0"}}>Du har ændret planen. Tryk <b>Lav ny madplan</b> for at sammenligne butikkerne igen.</div>`}
         ${plan.compare?.length > 1 && !plan.swapped && html`<div className="card" style=${{marginTop:8}}>
@@ -3719,11 +3916,25 @@ function App() {
     </div>
   </div>`;
 
-  const AppearancePage = () => html`<div className="list">
+  const AppearancePage = () => html`<div>
+    <div className="list">
     ${[["dark","Mørk"],["light","Lys"],["system","Følg systemet"]].map(([v,l]) => html`<button key=${v} className="row" onClick=${()=>setTheme(v)}>
       <div className="main"><div className="title">${l}</div></div>
       ${theme === v && html`<span className="chip info">Valgt</span>`}
     </button>`)}
+    </div>
+    <div className="section">
+      <div className="section-head"><h2>Lås med Face ID</h2></div>
+      <div className="card stack">
+        <div className="small muted">Appen beder om Face ID (eller Touch ID), når den har været lukket. Gælder kun denne enhed. iPhone spørger måske, om adgangsnøglen skal gemmes – sig ja.</div>
+        ${!window.PublicKeyCredential ? html`<div className="small neg">Denne browser kan ikke bruge Face ID.</div>` : lock.on
+          ? html`<label className="field">Lås efter<select className="input" value=${lock.after ?? 1} onChange=${e=>{ const l = { ...lock, after: +e.target.value }; store.setJson(LOCK_KEY, l); setLock(l); }}>
+              ${[[0, "Med det samme"], [1, "1 minut"], [5, "5 minutter"], [15, "15 minutter"], [60, "1 time"]].map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}</select></label>
+              <button className="btn" onClick=${()=>setLockOn(false)}>Slå låsen fra</button>`
+          : html`<button className="btn primary" onClick=${()=>setLockOn(true)}>Slå Face ID-lås til</button>`}
+        <${Msg} k="lock" />
+      </div>
+    </div>
   </div>`;
 
   const ApiKeyPage = () => {
@@ -3773,7 +3984,7 @@ function App() {
 
   const MorePage = () => {
     if (sub) {
-      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, report: ReportPage, trends: TrendsPage, su: SuPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
+      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, report: ReportPage, trends: TrendsPage, su: SuPage, shared: SharedPage, notify: NotifyPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
       return Sub ? Sub() : null;
     }
     const lastBackup = +store.get(BACKUP_KEY) || 0;
@@ -3806,6 +4017,24 @@ function App() {
   const canSync = Boolean(ebSession?.session_id) || Boolean(saxoTokens);
   const body = { home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, food: FoodPage, more: MorePage }[page]();
 
+  if (locked && lock.on) return html`<div className="lock-screen">
+    <div className="lock-inner">
+      <div className="lock-icon"><${Icon} name="shield" /></div>
+      <div style=${{fontSize:22, fontWeight:700}}>Økonomi er låst</div>
+      <button className="btn primary block" onClick=${unlock}>Lås op med Face ID</button>
+      ${lockMsg && html`<div className="small neg">${lockMsg}</div>`}
+      <details className="small muted" style=${{marginTop:18}}><summary>Virker Face ID ikke?</summary>
+        <div className="stack" style=${{marginTop:8}}>
+          <div>Skriv adgangskoden til din worker (APP_SECRET) for at låse op og slå låsen fra.</div>
+          <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); const b = store.json(BRIDGE_KEY); if (b?.secret ? lockSecret === b.secret : true) { store.remove(LOCK_KEY); setLock({}); setLocked(false); setLockSecret(""); } else setLockMsg("Forkert adgangskode."); }}>
+            <input className="input" type="password" value=${lockSecret} onChange=${e=>setLockSecret(e.target.value)} placeholder="Adgangskode" aria-label="Adgangskode til workeren" />
+            <button className="btn" type="submit">Lås op</button>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>`;
+
   return html`<div className=${"app" + (hideAmounts ? " privacy" : "")}>
     <input ref=${importRef} type="file" accept=".json,application/json" style=${{display:"none"}} onChange=${e=>{ e.target.files[0]&&importData(e.target.files[0]); e.target.value=""; }} />
     <header className="topbar">
@@ -3829,6 +4058,9 @@ function App() {
       <button onClick=${()=>{ toast.restore(); setToast(null); clearTimeout(toastTimer.current); }}>Fortryd</button>
     </div>`}
     ${cookFor && CookView()}
+    ${quick && QuickSheet()}
+    ${(page === "home" || page === "tx") && !quick && html`<button className="fab" aria-label="Hurtig udgift" onClick=${()=>setQuick({ amt: "", cat: "Mad & dagligvarer", note: "", kind: "out" })}><${Icon} name="plus" /></button>`}
+    ${msgs.quick && html`<div className="toast" role="status"><span>${msgs.quick}</span></div>`}
     <nav className="nav"><div className="nav-inner">
       ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); scrollToTop(); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
     </div></nav>
