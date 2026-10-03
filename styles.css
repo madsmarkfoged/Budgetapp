@@ -394,3 +394,18 @@ select.input { appearance: auto; }
 .start-tile .st { font-weight: 650; font-size: 15.5px; }
 .start-tile .ss { font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .start-tile.wide { grid-column: span 2; min-height: 0; flex-direction: row; align-items: center; }
+/* "Laver du mad?" day toggles */
+.day-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.day-chips::-webkit-scrollbar { display: none; }
+.day-chip { flex-shrink: 0; min-width: 62px; border: 1px solid var(--border); background: var(--track); color: inherit; font: inherit; border-radius: 12px; padding: 7px 8px; display: flex; flex-direction: column; align-items: center; gap: 1px; cursor: pointer; }
+.day-chip b { font-size: 12.5px; }
+.day-chip span { font-size: 11px; color: var(--text-2); }
+.day-chip i { font-style: normal; font-size: 12px; margin-top: 2px; }
+.day-chip.away { background: transparent; border-style: dashed; opacity: .7; }
+.day-chip.away b { text-decoration: line-through; }
+/* Træning */
+.wk-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent); display: inline-block; }
+.wk-dot.on { background: var(--accent); }
+.weight-chart { width: 100%; height: 90px; }
+.weight-chart path { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.weight-chart circle { fill: var(--accent); }

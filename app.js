@@ -1,21 +1,20 @@
 import React, { useState, useEffect, useRef } from "https://esm.sh/react@18.3.1";
 import { createRoot } from "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1";
 import htm from "https://esm.sh/htm@3.1.1";
+import { PAYDAY_CUTOFF, MONTHS_DA, budgetMonth, isoDate, addDays, monthEnd, addMonths, lastRentMonth, monthLabel, monthName, currentBudgetMonth, prevMonth, parseDKDate, prettyDate, easter, isBankClosed, paydayIn, nextPayday, WEEKDAYS } from "./lib/dates.js";
+import { uid, randomBytes, toB64, fromB64 } from "./lib/util.js";
+import { INCOME_CATS, CATEGORIES, CAT_COLORS, SHORT_CAT, EXCLUDED, RENT_TEXT, guessCategory, splitLine, DATE_RE, parseCSV, DEFAULT_BUDGETS, STUDENT_BUDGET, eff, monthIncomeExpense, subKey, prettyName, detectRecurring, detectSubscriptions, guessShare } from "./lib/transactions.js";
+import { DEFAULT_TRAINING, LIFTS, sessionFor, weekProgress, weekStreak, e1rm, parseWorkoutCsv, liftSummary } from "./lib/training.js";
+import { AWAY_WORDS, NOT_AWAY, calendarAway, icsEsc, icsDate, buildIcs } from "./lib/calendar.js";
+import { te, td, syncCryptoKey, gz, sealData, openData, deviceName } from "./lib/sync.js";
+import { TJEK_SEARCH, CHAINS, AARHUS, STAPLES, DEFAULT_SHOP, kr, chainOf, usualStores, searchOffers, MEAL_TEMPLATES, INGREDIENT_GROUPS, MEAL_STEPS, MEAL_SOURCE, VALDEMARSRO, VR_URL, VR_TAGS, MEAL_EXTRAS, OFFER_EXCLUDE, OFFER_ALIASES, OFFER_EXCLUDE_ALL, offerFits, NORMAL_PRICES, normalPrice, MEAL_AMOUNTS, ING, EXTRA_ING, REMA_DATA, PIECE_G, UNITS, UNIT_G, toGrams, mealServings, mealAmounts, perPortion, mealMacros, mealProtein, nice, fmtAmount, BASICS, KNOWN_TERMS, LINE_UNITS, SKIP_LINES, parseIngredientLine, mealFromRecipe, covers, AISLES, aisleOf, packsFor, planCost, planWeek } from "./lib/food.js";
 
 const html = htm.bind(React.createElement);
 
 // ---------------- constants ----------------
 
-const INCOME_CATS = ["Løn","SU","Anden indkomst"];
-const CATEGORIES = ["Løn","SU","Anden indkomst","Husleje","Mad & dagligvarer","Transport","Restaurant & café","Abonnementer","Forsikring","Sundhed & fitness","Shopping","Underholdning","Rejser","Opsparing","Investering","Intern overførsel","Udeladt","Andet"];
-const CAT_COLORS = {"Løn":"#0F6E56","SU":"#127C5A","Anden indkomst":"#3B8A6E","Husleje":"#378ADD","Mad & dagligvarer":"#639922","Transport":"#BA7517","Restaurant & café":"#D85A30","Abonnementer":"#534AB7","Forsikring":"#A32D2D","Sundhed & fitness":"#1D9E75","Shopping":"#D4537E","Underholdning":"#7F77DD","Rejser":"#EF9F27","Opsparing":"#185FA5","Investering":"#3B6D11","Intern overførsel":"#B4B2A9","Udeladt":"#888780","Andet":"#5F5E5A"};
-const SHORT_CAT = {"Mad & dagligvarer":"Mad","Restaurant & café":"Café","Sundhed & fitness":"Sundhed","Abonnementer":"Abonnem."};
-const EXCLUDED = ["Intern overførsel","Udeladt"];
-const PAYDAY_CUTOFF = 25;
 const CURRENCIES = ["DKK","USD","EUR","GBP","SEK","NOK"];
 const DEFAULT_FX = {EUR:7.46, USD:6.85, GBP:8.70, SEK:0.66, NOK:0.65};
-const MONTHS_DA = ["januar","februar","marts","april","maj","juni","juli","august","september","oktober","november","december"];
-
 const STORAGE_KEY = "budget_data";
 const API_KEY_KEY = "anthropic_api_key";
 const MODEL_KEY = "anthropic_model";
@@ -41,15 +40,6 @@ const store = {
 
 // ---------------- helpers (budget logic) ----------------
 
-function budgetMonth(dateStr, amount, category) {
-  const d = new Date(dateStr);
-  if (isNaN(d)) return (dateStr||"").slice(0,7);
-  let y = d.getFullYear(), m = d.getMonth();
-  const shift = (amount > 0 || category === "Husleje") && d.getDate() >= PAYDAY_CUTOFF;
-  if (shift) { m += 1; if (m > 11) { m = 0; y += 1; } }
-  return `${y}-${String(m+1).padStart(2,"0")}`;
-}
-
 // Privacy mode: set by App on every render; while on, amounts render as dots (for using the app in public).
 let HIDE_AMOUNTS = false;
 const fmtKr = (n) => new Intl.NumberFormat("da-DK",{style:"currency",currency:"DKK",maximumFractionDigits:0}).format(n);
@@ -57,49 +47,9 @@ const fmt = (n) => HIDE_AMOUNTS ? "••• kr." : fmtKr(n);
 const fmtShort = (n) => HIDE_AMOUNTS ? "•••" : new Intl.NumberFormat("da-DK",{maximumFractionDigits:0}).format(n);
 const numf = (n) => new Intl.NumberFormat("da-DK",{maximumFractionDigits:2}).format(n);
 const pctf = (n) => new Intl.NumberFormat("da-DK",{maximumFractionDigits:1,signDisplay:"always"}).format(n) + " %";
-const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
-const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-const addDays = (iso, n) => { const d = parseDKDate(iso); d.setDate(d.getDate()+n); return isoDate(d); };
-const monthEnd = (ym) => { const [y,m] = ym.split("-").map(Number); return `${ym}-${String(new Date(y,m,0).getDate()).padStart(2,"0")}`; };
-const addMonths = (ym, n) => { const [y,m] = ym.split("-").map(Number); return isoDate(new Date(y, m-1+n, 1)).slice(0,7); };
-// Fixed rent is booked on the last day of the month; this is the newest month whose rent day has come.
-const lastRentMonth = () => { const t = isoDate(new Date()); const ym = t.slice(0,7); return monthEnd(ym) <= t ? ym : addMonths(ym, -1); };
-const RENT_TEXT = "Husleje (fast)";
 const DEFAULT_RENT = { amount: 4982, assetId: null, auto: true, paidThrough: null };
 // Travel fund shared with the user's sister: each saves `goal`; trip costs are split 50/50.
 const DEFAULT_REJSE = { saved: 0, goal: 100000, accountId: null, trips: [] };
-const monthLabel = (ym) => { const [y,m] = ym.split("-"); return `${MONTHS_DA[+m-1]} ${y}`; };
-const monthName = (ym) => { const m = MONTHS_DA[+ym.split("-")[1]-1]; return m[0].toUpperCase() + m.slice(1); };
-// The running budget month flips to next month on payday itself.
-const currentBudgetMonth = () => {
-  const now = new Date();
-  let y = now.getFullYear(), m = now.getMonth();
-  if (new Date(y, m, now.getDate()) >= paydayIn(y, m)) { m += 1; if (m > 11) { m = 0; y += 1; } }
-  return `${y}-${String(m + 1).padStart(2, "0")}`;
-};
-const prevMonth = (ym) => { let [y,m] = ym.split("-").map(Number); m -= 1; if (m < 1) { m = 12; y -= 1; } return `${y}-${String(m).padStart(2,"0")}`; };
-
-function parseDKDate(s) {
-  if (!s) return null;
-  const parts = s.split(/[.\/-]/);
-  if (parts.length === 3) {
-    let [a,b,c] = parts;
-    if (c.length === 4) return new Date(+c, +b-1, +a);
-    if (a.length === 4) return new Date(+a, +b-1, +c);
-  }
-  const d = new Date(s);
-  return isNaN(d) ? null : d;
-}
-
-function prettyDate(iso) {
-  const today = isoDate(new Date());
-  if (iso === today) return "I dag";
-  if (iso === addDays(today, -1)) return "I går";
-  const d = parseDKDate(iso);
-  if (!d) return iso;
-  return `${d.getDate()}. ${MONTHS_DA[d.getMonth()]}${d.getFullYear() !== new Date().getFullYear() ? " " + d.getFullYear() : ""}`;
-}
-
 function syncTime(ts) {
   if (!ts) return null;
   const d = new Date(ts);
@@ -108,938 +58,7 @@ function syncTime(ts) {
 }
 const syncLabel = (ts) => ts ? `Synkroniseret ${syncTime(ts)}` : null;
 
-// Easter Sunday (anonymous Gregorian algorithm).
-function easter(y) {
-  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
-  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(y, month - 1, day);
-}
-
-// Danish bank closing days: weekends, public holidays, 5 June, 24 and 31 December and the Friday after Ascension.
-function isBankClosed(d) {
-  if (d.getDay() === 0 || d.getDay() === 6) return true;
-  const md = `${d.getMonth() + 1}-${d.getDate()}`;
-  if (["1-1", "6-5", "12-24", "12-25", "12-26", "12-31"].includes(md)) return true;
-  const e = easter(d.getFullYear());
-  const offset = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - e) / 86400e3);
-  return [-3, -2, 1, 39, 40, 50].includes(offset);
-}
-
-// Salary is paid on the last bank day of the month.
-function paydayIn(y, m) {
-  const d = new Date(y, m + 1, 0);
-  while (isBankClosed(d)) d.setDate(d.getDate() - 1);
-  return d;
-}
-
-function nextPayday(now = new Date()) {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let p = paydayIn(today.getFullYear(), today.getMonth());
-  if (p < today) p = paydayIn(today.getFullYear(), today.getMonth() + 1);
-  return { date: p, days: Math.round((p - today) / 86400e3) };
-}
-
-function guessCategory(desc) {
-  const d = (desc||"").toLowerCase();
-  if (/løn|lønoverf|loenoverf|salary|\bgage\b/.test(d)) return "Løn";
-  if (/\bsu\b|su[- ]?styr|uddannelsesstøtte|statens uddann/.test(d)) return "SU";
-  if (/husleje|\bleje\b|boligselskab|udlejning|huslejekonto/.test(d)) return "Husleje";
-  if (/tryg|forsikr|topdanmark|\balka\b|codan|gjensidige|gf forsikr/.test(d)) return "Forsikring";
-  if (/openai|chatgpt|spotify|netflix|hbo|disney|viaplay|youtube|icloud|apple\.com\/bill|itunes|dr\.|tv\s?2|avis|blad|abonne|subscr/.test(d)) return "Abonnementer";
-  if (/rema|netto|fakta|aldi|lidl|meny|fotex|føtex|bilka|daglig|supermark|groceri|coop|brugsen|kvickly|løvbjerg|loevbjerg|salling|\bspar\b|købmand|kobmand|7-eleven|kiosk|grønt|groent|bager|slagter|fiskehandl|lagkagehuset|nemlig|wolt/.test(d)) return "Mad & dagligvarer";
-  if (/dsb|rejsekort|fly|tog|bus|metro|taxa|uber|parkering|benzin|shell|circle k|ok\s?tank|kombardo|molslinjen|færge|faerge|flexii/.test(d)) return "Transport";
-  if (/restaurant|cafe|café|pizza|sushi|mcdo|burger|takeaway|just eat|shawarma|kebab|falafel|kanpla|kantine|compass group/.test(d)) return "Restaurant & café";
-  if (/fitness|gym|\bsport|svøm|træn|apotek|læge|tandlæge|medicin/.test(d)) return "Sundhed & fitness";
-  if (/2tall|h&m|zara|zalando|tøj|\bsko\b|mode|shopping|elgiganten|jysk|ikea|silvan|normal|guldsmed/.test(d)) return "Shopping";
-  if (/bio|kino|koncert|teater|event|underholdning/.test(d)) return "Underholdning";
-  if (/airbnb|hotel|booking|rejse|ferie/.test(d)) return "Rejser";
-  if (/overførsel til opsparing|opsparing|saving/.test(d)) return "Opsparing";
-  if (/invest|aktie|etf|nordnet|saxo/.test(d)) return "Investering";
-  if (/overførsel|overfoersel|egen konto|mellem konti|netbank|kontooverf/.test(d)) return "Intern overførsel";
-  if (/omregnet fra|til kurs|\beur\b|\busd\b|\bgbp\b/.test(d)) return "Rejser";
-  return "Andet";
-}
-
-function splitLine(line, sep) {
-  const out = []; let cur = "", inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
-    else if (ch === sep && !inQ) { out.push(cur); cur = ""; }
-    else cur += ch;
-  }
-  out.push(cur);
-  return out.map(c => c.trim());
-}
-
-const DATE_RE = /^\s*"?\d{1,4}[.\/-]\d{1,2}[.\/-]\d{1,4}/;
-
-function parseCSV(text) {
-  const lines = text.replace(/\r/g,"").trim().split("\n").filter(Boolean);
-  if (!lines.length) return [];
-  const sep = lines[0].includes(";") ? ";" : ",";
-  const firstIsData = DATE_RE.test(lines[0]);
-  let dateIdx, descIdx, amtIdx, startRow;
-  if (firstIsData) { dateIdx = 0; descIdx = 1; amtIdx = 2; startRow = 0; }
-  else {
-    const headers = splitLine(lines[0], sep).map(h => h.toLowerCase());
-    dateIdx = headers.findIndex(h => /dato|date/.test(h));
-    descIdx = headers.findIndex(h => /tekst|beskrivelse|description|text|navn|name|modtager|afsender/.test(h));
-    amtIdx = headers.findIndex(h => /beløb|amount|bel.b|sum/.test(h));
-    if (dateIdx < 0) dateIdx = 0; if (descIdx < 0) descIdx = 1; if (amtIdx < 0) amtIdx = 2;
-    startRow = 1;
-  }
-  const rows = [];
-  for (let i = startRow; i < lines.length; i++) {
-    const cols = splitLine(lines[i], sep);
-    if (cols.length <= amtIdx) continue;
-    const rawAmt = (cols[amtIdx] ?? "").replace(/\s/g,"").replace(/\.(?=\d{3}(\D|$))/g,"").replace(",",".");
-    const amt = parseFloat(rawAmt);
-    if (isNaN(amt)) continue;
-    const desc = (cols[descIdx] || "Ukendt").replace(/\\/g," ").replace(/\s+/g," ").trim();
-    const d = parseDKDate(cols[dateIdx]);
-    // localDate marks rows whose date is stored correctly (see mergeRows).
-    rows.push({ id: uid(), date: d ? isoDate(d) : cols[dateIdx], description: desc, amount: amt, category: guessCategory(desc), localDate: true });
-  }
-  return rows;
-}
-
-const DEFAULT_BUDGETS = {"Husleje":8000,"Mad & dagligvarer":3000,"Transport":1200,"Restaurant & café":1000,"Abonnementer":400,"Forsikring":500,"Sundhed & fitness":500,"Shopping":1000,"Underholdning":500,"Rejser":1000,"Opsparing":3000,"Investering":2000,"Andet":500};
-const STUDENT_BUDGET = {"Husleje":5300,"Mad & dagligvarer":1800,"Transport":350,"Restaurant & café":500,"Abonnementer":300,"Forsikring":250,"Sundhed & fitness":350,"Shopping":400,"Underholdning":400,"Rejser":300,"Opsparing":500,"Investering":400,"Andet":150};
 const SAXO_SEED_NAMES = ["Amundi Prime All Country World ETF Acc","Sparindex INDEX Globale Aktier KL","Microsoft Corp.","Amazon.com Inc.","ALK-Abelló B A/S","Zealand Pharma A/S","Rheinmetall AG"];
-
-const eff = (t) => (t && t.delt) ? t.amount/2 : (t ? t.amount : 0);
-
-function monthIncomeExpense(mtx) {
-  const cn = {};
-  for (const cat of CATEGORIES) cn[cat] = mtx.filter(t=>t.category===cat).reduce((s,t)=>s+eff(t),0);
-  const exp = CATEGORIES.reduce((s,c)=> INCOME_CATS.includes(c)? s : s + Math.max(0,-cn[c]), 0);
-  const sur = CATEGORIES.reduce((s,c)=> (!INCOME_CATS.includes(c) && cn[c]>0)? s+cn[c]:s, 0);
-  const inc = INCOME_CATS.reduce((s,c)=>s+Math.max(0,cn[c]),0) + sur;
-  return { inc, exp, sur, cn };
-}
-
-// Merchant key for grouping card/PBS charges: drops card words, numbers and references.
-const subKey = (d) => (d || "").toLowerCase()
-  .replace(/[^a-zæøå ]+/g, " ")
-  .replace(/\b(dankort|visa|mastercard|mc|nota|kortkøb|købt|betalingsservice|pbs|overførsel|dk|www|com|aps|as)\b/g, " ")
-  .replace(/\s+/g, " ").trim().split(" ").slice(0, 3).join(" ");
-
-// Readable merchant name from a bank text: drops MobilePay prefixes, addresses, note numbers and city suffixes.
-function prettyName(desc) {
-  if (/apple\.com\/bill|itunes/i.test(desc || "")) return "Apple";
-  let n = (desc || "").replace(/^(mob\.?\s*pay\*|mobilepay:?\s*(mobilepay\s*)?|dankort-nota\s+|pbs\s+)/i, "");
-  n = n.split(/\\|,|\s+Notanr\b|\s+beløb omregnet/i)[0].trim() || desc || "";
-  if (n === n.toUpperCase()) n = n.toLowerCase().replace(/(^|[\s*\-])\p{L}/gu, (m) => m.toUpperCase());
-  return n;
-}
-
-// Recurring payments in the last six months: about once a month at a stable amount, still active.
-// sign -1 finds charges (subscriptions), +1 finds money coming in (people paying their share).
-function detectRecurring(transactions, sign, hidden = []) {
-  const today = isoDate(new Date());
-  const since = addDays(today, -190), stale = addDays(today, -45);
-  const groups = {};
-  for (const t of transactions) {
-    if (!t.date || t.date < since || !(t.amount * sign > 0) || t.trip || t.description === RENT_TEXT) continue;
-    if (EXCLUDED.includes(t.category) || ["Løn", "SU", "Husleje", "Opsparing", "Investering"].includes(t.category)) continue;
-    // Regular trips and shopping (Kombardo, Rejsekort, the same supermarket) repeat too, but aren't subscriptions.
-    if (sign < 0 && ["Transport", "Mad & dagligvarer", "Restaurant & café", "Shopping", "Rejser"].includes(t.category)) continue;
-    const k = subKey(t.description);
-    if (k.length < 3) continue;
-    (groups[k] ||= []).push(t);
-  }
-  // One merchant can bill several subscriptions (Apple: "APPLE.COM/BILL, CORK" for iCloud, apps, …):
-  // when it charges more often than monthly, each recurring amount becomes its own subscription.
-  for (const [k, txs] of Object.entries(groups)) {
-    if (txs.length <= new Set(txs.map(t => t.date.slice(0, 7))).size * 1.5) continue;
-    delete groups[k];
-    for (const t of txs) (groups[`${k} ${Math.round(Math.abs(t.amount))}`] ||= []).push(t);
-  }
-  const out = [];
-  for (const [key, txs] of Object.entries(groups)) {
-    if (hidden.includes(key)) continue;
-    txs.sort((a, b) => a.date.localeCompare(b.date));
-    const months = new Set(txs.map(t => t.date.slice(0, 7)));
-    const known = sign < 0 && txs.some(t => t.category === "Abonnementer");
-    if (months.size < (known ? 2 : 3) || txs.length > months.size * 1.5) continue;
-    const amounts = txs.map(t => Math.abs(t.amount)).sort((a, b) => a - b);
-    const median = amounts[Math.floor(amounts.length / 2)];
-    if (median < (known ? 5 : 10) || (amounts[amounts.length - 1] - amounts[0]) / median > 0.35) continue;
-    const last = txs[txs.length - 1];
-    if (last.date < stale) continue;
-    const split = key !== subKey(last.description);
-    // Price rise: the newest charge is more than 3 % above the one before it.
-    const before = txs.length > 1 ? Math.abs(txs[txs.length - 2].amount) : null;
-    const rose = before && Math.abs(last.amount) > before * 1.03 ? { from: before, to: Math.abs(last.amount), date: last.date } : null;
-    out.push({ key, name: prettyName(last.description) + (split ? ` (${Math.round(Math.abs(last.amount))} kr.)` : ""), raw: last.description, category: last.category, monthly: Math.abs(last.amount), last: last.date, months: months.size, rose });
-  }
-  return out.sort((a, b) => b.monthly - a.monthly);
-}
-const detectSubscriptions = (transactions, hidden) => detectRecurring(transactions, -1, hidden);
-
-// Guess which recurring payment-in covers part of a subscription: a word from the payer's text appears in
-// the merchant's text ("Fitness X - Chrisser" ↔ "FitnessX A/S"). Anything looser is left to the user.
-function guessShare(sub, incoming) {
-  const target = (sub.raw || "").toLowerCase().replace(/[^a-zæøå]+/g, "");
-  const generic = ["mobilepay", "mobpay", "betaling", "overfoersel", "indbetaling", "fra", "til"];
-  return incoming.find(i => i.key.split(" ").some(w => w.length >= 4 && !generic.includes(w) && target.includes(w))) || null;
-}
-
-// ---------------- shopping list from weekly offers (Tjek / eTilbudsavis) ----------------
-// Tjek's public offer search allows calls from the app's origin and needs no key. It is not an
-// official, documented API, so everything here degrades to "no offers found" if it changes.
-const TJEK_SEARCH = "https://squid-api.tjek.com/v2/offers/search";
-const CHAINS = ["REMA 1000", "Netto", "Lidl", "Føtex", "Bilka", "Coop 365", "SuperBrugsen", "Kvickly", "Dagli'Brugsen", "Meny", "Spar", "Løvbjerg", "Min Købmand", "Lagkagehuset", "7-Eleven"];
-const AARHUS = { lat: 56.1572, lng: 10.2107, place: "Aarhus C" };
-const STAPLES = ["Mælk", "Æg", "Brød", "Kaffe", "Smør", "Ost", "Kylling", "Hakket oksekød", "Pasta", "Ris", "Bananer", "Yoghurt", "Toiletpapir"];
-const DEFAULT_SHOP = { items: [], stores: null, meals: [], staples: ["græsk yoghurt"], days: 6, cookDays: 3, perNight: 1, plan: null,
-  pantry: null, freezer: [], useFreezer: true, preferProtein: true, offerCheck: null, ...AARHUS };
-const kr = (n) => new Intl.NumberFormat("da-DK", { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 }).format(n) + " kr.";
-const chainOf = (dealerName) => CHAINS.find(c => (dealerName || "").toLowerCase().startsWith(c.toLowerCase())) || dealerName;
-
-// The chains the user actually shops in, from card purchases in the last 90 days (2+ visits).
-function usualStores(transactions) {
-  const since = addDays(isoDate(new Date()), -90), n = {};
-  for (const t of transactions) {
-    if (!t.date || t.date < since || !(t.amount < 0)) continue;
-    const d = (t.description || "").toLowerCase();
-    const c = CHAINS.find(c => d.includes(c.toLowerCase().replace(/\s+/g, " ")) || d.includes(c.toLowerCase().replace(/\s+/g, "")));
-    if (c) n[c] = (n[c] || 0) + 1;
-  }
-  return Object.entries(n).filter(([, k]) => k >= 2).sort((a, b) => b[1] - a[1]).map(([c]) => c);
-}
-
-async function searchOffers(query, { lat, lng }) {
-  const q = new URLSearchParams({ query, r_lat: lat, r_lng: lng, r_radius: 10000, limit: 40 });
-  const res = await fetch(`${TJEK_SEARCH}?${q}`);
-  if (!res.ok) throw new Error(`Tilbud kunne ikke hentes (${res.status}).`);
-  const now = Date.now();
-  return (await res.json())
-    .filter(o => o.pricing?.price != null && (!o.run_till || Date.parse(o.run_till) >= now))
-    .map(o => ({
-      id: o.id, heading: o.heading, description: o.description || "", price: +o.pricing.price, before: o.pricing.pre_price,
-      store: chainOf(o.dealer?.name), from: o.run_from, till: o.run_till, image: o.images?.thumb || null,
-    }));
-  // Kept in Tjek's order (best match first): the cheapest hit for "kaffe" is often capsules, not coffee.
-}
-
-// Starter meals to pick favourites from; each ingredient is also the offer search term.
-const MEAL_TEMPLATES = [
-  ["Kylling i karry", ["kylling", "ris", "kokosmælk", "løg"]],
-  ["Spaghetti bolognese", ["hakket oksekød", "spaghetti", "hakkede tomater", "løg"]],
-  ["Chili con carne", ["hakket oksekød", "kidneybønner", "hakkede tomater", "ris"]],
-  ["Tacos", ["hakket oksekød", "tortilla", "ost", "salat"]],
-  ["Pasta med kylling og pesto", ["kylling", "pasta", "pesto"]],
-  ["Wok med kylling", ["kylling", "nudler", "wokgrøntsager"]],
-  ["Lasagne", ["hakket oksekød", "lasagneplader", "hakkede tomater", "ost"]],
-  ["Laks med kartofler", ["laks", "kartofler", "broccoli"]],
-  ["Frikadeller med kartofler", ["hakket svinekød", "kartofler", "æg"]],
-  ["Burger", ["burgerboller", "hakket oksekød", "ost", "salat"]],
-  ["Pizza", ["pizzadej", "skinke", "ost", "tomatsauce"]],
-  ["Omelet med bacon", ["æg", "bacon", "ost"]],
-  // Protein-rich pasta dishes (roughly 40–50 g protein per portion).
-  ["Kyllingepasta med hytteostsauce", ["kylling", "pasta", "hytteost", "spinat", "hvidløg"]],
-  ["Bolognese med linser", ["hakket oksekød", "røde linser", "pasta", "hakkede tomater", "løg"]],
-  ["Tunpasta med cherrytomater", ["tun", "pasta", "cherrytomater", "rødløg", "skyr"]],
-  ["Kalkunpasta med pesto og spinat", ["kalkun", "pasta", "pesto", "spinat"]],
-  ["Kylling og broccoli i parmesanpasta", ["kylling", "pasta", "broccoli", "parmesan"]],
-  ["Laksepasta med citron og spinat", ["laks", "pasta", "spinat", "skyr", "citron"]],
-  // Picked by the user from other recipe sites (see MEAL_SOURCE); the method is written in the app's own words.
-  ["Taco pastasalat med oksekød", ["hakket oksekød", "pasta", "kidneybønner", "peberfrugt", "rødløg", "majs", "cherrytomater", "salat", "cheddar", "løg", "tacokrydderi", "creme fraiche", "mayonnaise", "salsa", "lime"]],
-  ["Svensk pølseret (Gourministeriet)", ["pølser", "kartofler", "løg", "hvidløg", "paprika", "tomatpuré", "piskefløde", "ketchup", "purløg"]],
-  ["Mexicansk kartoffelfad med oksekød", ["hakket oksekød", "kartofler", "løg", "hvidløg", "peberfrugt", "tacokrydderi", "tomatpuré", "bouillon", "fløde", "kidneybønner", "cheddar", "creme fraiche"]],
-];
-// Ingredients to pick from under "Retter", grouped like a shop.
-// Ingredients to pick from, grouped the way a Danish supermarket is laid out (also the shopping-list order).
-// No chain publishes an open product catalogue, so this is a hand-made list of common raw ingredients.
-const INGREDIENT_GROUPS = [
-  ["Grønt", ["løg", "rødløg", "skalotteløg", "forårsløg", "porre", "hvidløg", "gulerødder", "kartofler", "små kartofler", "søde kartofler", "pastinak", "persillerod", "rødbeder", "jordskokker", "knoldselleri", "bladselleri", "fennikel", "squash", "hokkaido", "aubergine", "peberfrugt", "champignon", "portobello", "kantareller", "spinat", "grønkål", "pak choi", "broccoli", "blomkål", "rosenkål", "spidskål", "hvidkål", "rødkål", "grønne bønner", "sukkerærter", "asparges", "majs", "agurk", "tomater", "cherrytomater", "salat", "icebergsalat", "rucola", "feldsalat", "radiser", "avocado", "chili", "ingefær", "citron", "lime", "persille", "basilikum", "frisk koriander", "mynte", "dild", "purløg", "rosmarin", "karse"]],
-  ["Frugt", ["bananer", "æbler", "pærer", "appelsiner", "clementiner", "kiwi", "nektariner", "blommer", "blåbær", "jordbær", "hindbær", "druer", "melon", "mango", "ananas", "granatæble", "passionsfrugt", "dadler", "rosiner", "figner"]],
-  ["Brød, pasta og ris", ["pasta", "spaghetti", "penne", "fusilli", "rigatoni", "tagliatelle", "lasagneplader", "frisk pasta", "tortellini", "gnocchi", "nudler", "risnudler", "ris", "jasminris", "basmatiris", "brune ris", "risottoris", "couscous", "bulgur", "quinoa", "havregryn", "müsli", "cornflakes", "tortilla", "taco shells", "pitabrød", "naanbrød", "burgerboller", "pizzadej", "butterdej", "tærtedej", "rugbrød", "toastbrød", "brød", "boller", "panko"]],
-  ["Kød", ["kylling", "kyllingebryst", "kyllingeinderfilet", "kyllingelårfilet", "kyllingelår", "kyllingeunderlår", "kyllingevinger", "hel kylling", "hakket kylling", "kalkun", "hakket oksekød", "hakket svinekød", "hakket gris og kalv", "oksekød i tern", "tykstegsbøf", "højrebsbøf", "rib eye", "culotte", "svinemørbrad", "nakkefilet", "koteletter", "nakkekoteletter", "skinkeschnitzel", "flæskesteg", "flæsk", "medister", "frikadeller", "kødboller", "bacon", "skinke", "pølser", "chorizo", "salsiccia", "pepperoni", "kyllingepålæg", "lammeculotte", "andebryst"]],
-  ["Fisk", ["laks", "torsk", "kuller", "mørksej", "rødspætte", "tun", "rejer", "makrel", "fiskefars", "fiskefrikadeller", "fiskepinde"]],
-  ["Mejeri og æg", ["æg", "mælk", "kærnemælk", "smør", "fløde", "piskefløde", "madlavningsfløde", "creme fraiche", "skyr", "græsk yoghurt", "yoghurt", "ymer", "kvark", "proteinbudding", "ost", "revet ost", "skiveost", "mozzarella", "parmesan", "cheddar", "feta", "halloumi", "hytteost", "flødeost", "ricotta", "mascarpone", "brie"]],
-  ["Bønner, linser og nødder", ["røde linser", "grønne linser", "kikærter", "kidneybønner", "sorte bønner", "hvide bønner", "edamame", "tofu", "nødder", "mandler", "cashewnødder", "peanuts", "valnødder", "peanutbutter", "solsikkekerner", "græskarkerner", "chiafrø", "sesamfrø"]],
-  ["Dåser og saucer", ["hakkede tomater", "flåede tomater", "passata", "tomatpuré", "tomatsauce", "pizzasauce", "kokosmælk", "pesto", "bouillon", "soja", "østerssauce", "fiskesauce", "hoisin", "karrypasta", "sød chilisauce", "sriracha", "ketchup", "sennep", "mayonnaise", "salsa", "tahin", "honning", "oliven", "kapers", "soltørrede tomater", "rødvin", "hvidvin", "olivenolie", "rapsolie"]],
-  ["Frost", ["wokgrøntsager", "ærter", "frossen spinat", "frossen broccoli", "frosne bær", "pommes frites", "frosne grøntsager", "blomkålsris"]],
-  ["Krydderier", ["tacokrydderi", "oregano", "timian", "paprika", "røget paprika", "spidskommen", "karry", "garam masala", "gurkemeje", "kanel", "chiliflager", "hvidløgspulver", "laurbærblade", "kardemomme", "koriander", "muskatnød", "salt", "peber"]],
-];
-// How to cook the starter meals (written for the app, for the amounts in MEAL_AMOUNTS). Salt, pepper and oil
-// are assumed to be at home.
-const MEAL_STEPS = {
-  "Kylling i karry": [30, ["Kog risen efter anvisningen på posen.", "Skær kyllingen i mundrette stykker, og hak løget.", "Brun kyllingen i lidt olie i en gryde ved høj varme i 3–4 minutter. Tag den op.", "Svits løget blødt i gryden i 3–4 minutter. Tilsæt 1–2 spsk karry, og rør rundt i et minut.", "Hæld kokosmælken i, læg kyllingen tilbage, og lad det simre i 10 minutter, til kyllingen er gennemstegt.", "Smag til med salt og peber, og server med risen."]],
-  "Spaghetti bolognese": [40, ["Hak løget fint, og svits det i lidt olie i en gryde i 3–4 minutter.", "Tilsæt oksekødet, og brun det ved høj varme, mens du deler det med en grydeske.", "Tilsæt de hakkede tomater, 1 tsk oregano, salt og peber. Lad saucen simre under halvt låg i 20–25 minutter.", "Kog spaghettien i godt saltet vand efter anvisningen på pakken.", "Smag saucen til, og server den over pastaen."]],
-  "Chili con carne": [40, ["Kog risen efter anvisningen på posen.", "Brun oksekødet i lidt olie i en gryde ved høj varme.", "Tilsæt 1 tsk spidskommen, 1 tsk paprika og ½ tsk chiliflager, og rør rundt i et minut.", "Tilsæt de hakkede tomater og de skyllede kidneybønner. Lad chilien simre i 20 minutter, og rør af og til.", "Smag til med salt og peber, og server med risen – gerne med en klat creme fraiche."]],
-  "Tacos": [25, ["Brun oksekødet i lidt olie på en pande ved høj varme.", "Tilsæt tacokrydderi og ½ dl vand, og lad det simre i 5 minutter.", "Snit salaten, og riv osten, hvis den ikke er revet.", "Varm tortillaerne på en tør pande eller 5 minutter i ovnen ved 180 grader.", "Fyld tortillaerne med kød, salat og ost."]],
-  "Pasta med kylling og pesto": [25, ["Kog pastaen i godt saltet vand.", "Skær kyllingen i strimler, og steg den i lidt olie i 6–8 minutter, til den er gennemstegt. Krydr med salt og peber.", "Hæld pastaen fra, men gem 1 dl af kogevandet.", "Vend pasta, kylling og pesto sammen med lidt af kogevandet, så det bliver cremet."]],
-  "Wok med kylling": [20, ["Kog nudlerne efter anvisningen, og skyl dem kort i koldt vand.", "Skær kyllingen i tynde strimler, og steg den i olie ved høj varme i en wok eller stor pande i 5–6 minutter.", "Tilsæt wokgrøntsagerne, og steg videre i 3–4 minutter under omrøring.", "Vend nudlerne i, og smag til med 2–3 spsk soja."]],
-  "Lasagne": [90, ["Tænd ovnen på 200 grader.", "Brun oksekødet i lidt olie. Tilsæt de hakkede tomater, 1 tsk oregano, salt og peber, og lad saucen simre i 15 minutter.", "Læg lag i et ovnfast fad: kødsauce, lasagneplader, kødsauce osv. Slut med et lag kødsauce. Vil du have den mere cremet, så kom en klat creme fraiche mellem lagene.", "Drys osten over.", "Bag lasagnen i 35–40 minutter, til pladerne er møre og osten er gylden. Lad den hvile 10 minutter, før den skæres."]],
-  "Laks med kartofler": [35, ["Kog kartoflerne i saltet vand i 15–20 minutter, til de er møre.", "Tænd ovnen på 200 grader. Læg laksen i et ovnfast fad, og krydr med salt, peber og evt. lidt citron.", "Bag laksen i 12–15 minutter.", "Del broccolien i buketter, og kog den i 3–4 minutter.", "Server laks, kartofler og broccoli sammen."]],
-  "Frikadeller med kartofler": [45, ["Rør det hakkede svinekød med ægget, 2 spsk hvedemel, 1 tsk salt og lidt peber. Lad farsen hvile i køleskabet i 15 minutter.", "Kog kartoflerne i saltet vand i 15–20 minutter.", "Form frikadeller med en ske dyppet i vand.", "Steg frikadellerne i smør eller olie ved middelvarme i 4–5 minutter på hver side, til de er gennemstegte."]],
-  "Burger": [25, ["Form oksekødet til 4 bøffer, og krydr med salt og peber.", "Steg bøfferne på en varm pande i 3–4 minutter på hver side. Læg ost på det sidste minut, og læg låg på.", "Rist bollerne let på panden.", "Saml burgerne med salat og bøf."]],
-  "Pizza": [30, ["Tænd ovnen på 225 grader eller det højeste, den kan.", "Rul dejen ud på en bageplade med bagepapir.", "Smør tomatsaucen ud, og fordel skinke og ost.", "Bag pizzaen i 12–15 minutter, til bunden er sprød og osten gylden."]],
-  "Omelet med bacon": [15, ["Steg baconen sprød på en pande, og tag den op.", "Pisk æggene med salt, peber og evt. en sjat mælk.", "Hæld æggene på panden ved middelvarme, og rør let, til de begynder at stivne.", "Drys bacon og ost over, og læg låg på i 2–3 minutter, til omeletten er stivnet."]],
-  "Kyllingepasta med hytteostsauce": [30, ["Kog pastaen i godt saltet vand.", "Skær kyllingen i tern, og steg den i lidt olie i 6–8 minutter. Krydr med salt og peber.", "Blend hytteosten med hvidløg og lidt pastavand til en glat sauce. Har du ikke en blender, så rør den sammen ved lav varme.", "Vend spinaten i panden, til den falder sammen. Tilsæt sauce og pasta, og varm det igennem ved lav varme – det må ikke koge.", "Smag til med salt og peber."]],
-  "Bolognese med linser": [40, ["Hak løget fint, og svits det i lidt olie i en gryde i 3–4 minutter.", "Tilsæt oksekødet, og brun det ved høj varme.", "Tilsæt de skyllede røde linser, de hakkede tomater og 2 dl vand. Lad det simre i 20 minutter, til linserne er møre. Kom mere vand i, hvis den bliver for tyk.", "Kog pastaen imens.", "Smag saucen til med salt og peber, og server over pastaen."]],
-  "Tunpasta med cherrytomater": [20, ["Kog pastaen, og lad den dryppe af.", "Halvér cherrytomaterne, hak rødløget fint, og lad tunen dryppe af.", "Rør skyren med salt, peber og evt. lidt citron.", "Vend pasta, tun, tomater, rødløg og skyrsauce sammen. Retten kan spises lun eller kold."]],
-  "Kalkunpasta med pesto og spinat": [25, ["Kog pastaen i godt saltet vand.", "Skær kalkunen i strimler, og steg den i lidt olie i 6–8 minutter.", "Vend spinaten i panden, til den falder sammen.", "Tilsæt pasta, pesto og lidt kogevand, og vend det hele sammen."]],
-  "Kylling og broccoli i parmesanpasta": [25, ["Kog pastaen. Kom broccolibuketterne i gryden de sidste 3 minutter.", "Skær kyllingen i tern, og steg den i lidt olie i 6–8 minutter.", "Hæld pasta og broccoli fra, men gem 1 dl kogevand.", "Vend det hele sammen med revet parmesan og kogevandet til en cremet sauce. Smag til med peber."]],
-  "Taco pastasalat med oksekød": [30, ["Steg det hakkede løg klart i lidt olie på en pande.", "Tilsæt oksekødet, brun det godt, og rør tacokrydderiet i. Stil det til side.", "Dressing: Rør creme fraiche, mayonnaise og salsa sammen, og smag til med limesaft, salt og peber. Stil den på køl.", "Kog pastaen efter anvisningen, skyl den i koldt vand, og lad den dryppe af.", "Skær peberfrugt i tern, rødløg i strimler, halvér cherrytomaterne, og snit salaten. Skyl og dræn bønnerne.", "Bland pasta, grøntsager, bønner, majs, oksekød og revet cheddar i en stor skål, og vend dressingen i. Server gerne med tortillachips."]],
-  "Svensk pølseret (Gourministeriet)": [30, ["Kog kartoflerne, hvis de ikke er kogt i forvejen, og skær dem i tern. Skær pølserne i mundrette stykker.", "Smelt lidt smør og olie på en stor pande, og steg hakket løg og hvidløg, til løget er klart.", "Rør paprika (og evt. et nip chili) og tomatpuré i, og lad det stege et par minutter.", "Kom pølserne på panden, og brun dem i ca. 5 minutter.", "Tilsæt kartofler, fløde og ketchup. Varm retten igennem ved middelvarme i ca. 10 minutter – lad den ikke koge kraftigt, så kartoflerne holder formen.", "Smag til med salt og peber (og lidt mere fløde, hvis der mangler sauce), og drys purløg over."]],
-  "Mexicansk kartoffelfad med oksekød": [50, ["Kog de skrællede kartofler i saltet vand i 8–10 minutter, til de næsten er møre. Hæld vandet fra.", "Brun oksekødet i lidt olie på en pande eller i en gryde.", "Tilsæt hakket løg, hvidløg og peberfrugt i tern (og evt. et par hakkede jalapeños), og steg, til løget er klart.", "Rør tacokrydderi og tomatpuré i, og krydr med salt og peber.", "Hæld bouillon og fløde i, og lad det simre i ca. 5 minutter. Rør de drænede bønner i.", "Skær kartoflerne i skiver. Læg halvdelen i et smurt ovnfast fad, så halvdelen af kødsaucen, og gentag.", "Drys cheddar over, og bag retten ved 200 grader i ca. 25 minutter.", "Lad den hvile i 10 minutter, og server med creme fraiche."]],
-  "Laksepasta med citron og spinat": [25, ["Kog pastaen i godt saltet vand.", "Skær laksen i tern, og steg den forsigtigt i 3–4 minutter.", "Vend spinaten i panden, til den falder sammen.", "Rør skyren med revet citronskal, saften af ½ citron, salt og peber.", "Vend pasta, laks og sauce sammen ved lav varme."]],
-};
-// Where a starter meal comes from, when it's based on a recipe the user picked on another site.
-const MEAL_SOURCE = {
-  "Taco pastasalat med oksekød": { site: "Gourministeriet", url: "https://gourministeriet.dk/taco-pastasalat-med-oksekoed/" },
-  "Svensk pølseret (Gourministeriet)": { site: "Gourministeriet", url: "https://gourministeriet.dk/svensk-poelseret/" },
-  "Mexicansk kartoffelfad med oksekød": { site: "Gourministeriet", url: "https://gourministeriet.dk/mexicansk-kartoffelfad-med-oksekoed-og-groentsager/" },
-};
-// Valdemarsro dinners to pick from under Retter. Only names and links live here (the repo is public): the
-// ingredients are fetched through the worker when the user adds one, and the method when they open it.
-const VALDEMARSRO = [
-  ["salsiccia-pasta", "Salsiccia Pasta", "Pasta"], ["dhal", "Indisk dhal med raita", "Vegetar"], ["lasagne", "Lasagne", "Pasta"],
-  ["pesto-pasta", "Pesto Pasta", "Pasta"], ["pasta-med-laks-og-spinat", "Pasta med laks og spinat", "Pasta"],
-  ["marry-me-chicken-orzo-med-spinat", "Marry Me Chicken Orzo med spinat", "Kylling"], ["marry-me-chicken", "Marry Me Chicken", "Kylling"],
-  ["pasta-med-moerbrad-i-tomatfloedesauce", "Pasta med mørbrad i tomatflødesauce", "Pasta"], ["nem-koedsauce-med-groentsager", "Nem kødsauce med grøntsager", "Oksekød"],
-  ["one-pot-pasta-ala-cheeseburger", "One pot pasta ala Cheeseburger", "Pasta"], ["texmex-mac-and-cheese", "TexMex Mac and Cheese", "Pasta"],
-  ["bagt-pasta-bolognese", "Bagt pasta bolognese", "Pasta"], ["feta-pasta-med-tomat", "Feta pasta med tomat", "Vegetar"], ["vodka-pasta", "Vodka Pasta", "Pasta"],
-  ["tortellini-i-fad", "Tortellini i fad", "Pasta"], ["italienske-koedboller-i-tomatsauce-i-ovn", "Italienske kødboller i tomatsauce", "Gris"],
-  ["one-pot-pasta", "One pot pasta med chorizo", "Pasta"], ["pastasalat-med-kylling-og-karrydressing", "Pastasalat med kylling og karrydressing", "Kylling"],
-  ["kylling-med-parmesan", "Kylling med parmesan, salvie og tomater", "Kylling"], ["kylling-cremet-sennepssauce", "Kylling i cremet sennepssauce", "Kylling"],
-  ["kylling-i-fad-med-groent", "Kylling i fad med grønt", "Kylling"], ["kyllingefrikadeller", "Kyllingefrikadeller", "Kylling"],
-  ["chicken-caesar-tacos", "Chicken Cæsar Tacos", "Kylling"], ["ramen-med-sproed-kylling", "Ramen med sprød kylling", "Suppe"],
-  ["nudelsuppe-med-kylling-og-groent", "Nudelsuppe med kylling og grønt", "Suppe"], ["kyllingegryde", "Marokkansk kyllingegryde", "Kylling"],
-  ["hoensefrikasse", "Hønsefrikassé", "Kylling"], ["chili-con-carne", "Chili con carne", "Oksekød"],
-  ["kaalpande-med-spidskaal-og-oksekoed", "Kålpande med spidskål og oksekød", "Oksekød"], ["kaalfad-med-hakket-oksekoed", "Kålfad med hakket oksekød", "Oksekød"],
-  ["cheeseburger-tacos", "Cheeseburger Tacos", "Oksekød"], ["mexicansk-suppe-med-oksekoed", "Mexicansk suppe med oksekød", "Suppe"], ["ragu", "Ragu", "Oksekød"],
-  ["koedboller-i-svampesauce", "Kødboller i svampesauce", "Gris"], ["lasagnesuppe", "Lasagnesuppe", "Suppe"], ["millionlinser", "Millionlinser", "Oksekød"],
-  ["svensk-poelseret", "Svensk pølseret", "Gris"], ["chorizosuppe", "Chorizosuppe med kartofler og grønkål", "Suppe"],
-  ["kikaertegryde", "Kikærtegryde med linser og kokosmælk", "Vegetar"], ["marokkansk-linsegryde", "Marokkansk linsegryde", "Vegetar"],
-  ["boennegryde", "Bønnegryde", "Vegetar"], ["halloumi-stroganoff-med-kartoffelmos", "Halloumi Stroganoff med kartoffelmos", "Vegetar"],
-  ["gullashsuppe", "Gullashsuppe", "Suppe"], ["kaalsalat-med-crispy-kylling-og-mangodressing", "Kålsalat med crispy kylling og mangodressing", "Kylling"],
-];
-const VR_URL = (slug) => `https://www.valdemarsro.dk/${slug}/`;
-const VR_TAGS = ["Pasta", "Kylling", "Oksekød", "Gris", "Vegetar", "Suppe"];
-// What people usually add to the simple starter versions.
-const MEAL_EXTRAS = {
-  "Spaghetti bolognese": ["gulerødder", "bladselleri", "hvidløg", "tomatpuré", "rødvin", "bouillon", "parmesan", "oregano"],
-  "Lasagne": ["gulerødder", "bladselleri", "hvidløg", "tomatpuré", "mælk", "smør", "mozzarella", "parmesan"],
-  "Bolognese med linser": ["gulerødder", "bladselleri", "hvidløg", "tomatpuré", "parmesan"],
-  "Chili con carne": ["peberfrugt", "hvidløg", "chili", "tomatpuré", "majs", "creme fraiche"],
-  "Tacos": ["peberfrugt", "majs", "avocado", "creme fraiche", "tacokrydderi", "rødløg"],
-  "Kylling i karry": ["karrypasta", "peberfrugt", "hvidløg", "ingefær", "spinat"],
-  "Wok med kylling": ["peberfrugt", "soja", "hvidløg", "ingefær", "chili"],
-  "Pasta med kylling og pesto": ["spinat", "cherrytomater", "parmesan"],
-  "Burger": ["rødløg", "bacon", "agurk"],
-  "Pizza": ["mozzarella", "champignon", "peberfrugt", "oregano"],
-};
-const WEEKDAYS = ["Søndag", "Mandag", "Tirsdag", "Onsdag", "Torsdag", "Fredag", "Lørdag"];
-
-// An offer fits an ingredient when every word of the ingredient starts a word in the offer heading
-// ("hakket oksekød" ↔ "Hakket oksekød 8-12 %"), so "ris" doesn't match "pris".
-// Offers that contain the ingredient's words but are a different product: matched as plain text in the
-// lowercased heading ("yoghurt" must not become a drinking yoghurt, "ris" not rice pudding).
-const OFFER_EXCLUDE = {
-  "yoghurt": ["drik", "cheasy", "frugt", "jordbær", "hindbær", "vanilje", "mango", "smoothie", "müsli", "skyr"],
-  "græsk yoghurt": ["drik", "frugt", "jordbær", "hindbær", "vanilje", "mango", "honning"],
-  "skyr": ["drik", "frugt", "jordbær", "hindbær", "vanilje", "mango"],
-  "ost": ["ostesnack", "ostepop", "ostekage", "ostehaps", "ostekiks", "flødeost", "smøreost", "hytteost", "pizza", "toast", "burger"],
-  "salat": ["k-salat", "pålæg", "hønse", "kartoffelsalat", "pastasalat", "tunsalat", "rejesalat", "dressing"],
-  "kylling": ["pålæg", "nugget", "kebab", "suppe", "bouillon", "salat"],
-  "ris": ["risalamande", "riskiks", "rispapir", "risret", "nudel", "risengrød", "pops"],
-  "pasta": ["pastasalat", "pastasauce", "pastaret", "færdigret"],
-  "spaghetti": ["sauce", "færdigret"],
-  "løg": ["løgringe", "stegte løg", "ristede løg", "chips"],
-  "kartofler": ["chips", "pommes", "kartoffelsalat", "kartoffelmos", "rösti"],
-  "laks": ["røget", "gravad", "rogn", "pålæg", "salat"],
-  "hakket oksekød": ["burger", "frikadelle", "færdigret", "lasagne"],
-  "hakket svinekød": ["frikadelle", "færdigret"],
-  "spinat": ["chips", "tærte", "dip"],
-  "fløde": ["flødeboll", "flødeost", "flødeis", "flødekaramel", "flødekage"],
-  "tun": ["tunsalat", "pålæg", "mousse"],
-  "ingefær": ["shot", "øl", "drik", "juice", "kiks"],
-  "citron": ["juice", "vand", "sodavand", "citronmåne", "kage", "the"],
-  "agurk": ["salat", "sylte", "pickles"],
-  "mælk": ["kakao", "chokolade", "kokos", "mandel", "havre", "soja", "drik"],
-  "æg": ["påske", "chokolade", "kinder", "nudel"],
-  "kokosmælk": ["drik"],
-  "bacon": ["chips", "snack"],
-  "kalkun": ["pålæg"],
-  "skinke": ["salat"],
-  "hytteost": ["frugt"],
-};
-// Compound words that also count as the ingredient ("piskefløde" is fløde, "jasminris" is ris).
-const OFFER_ALIASES = {
-  "fløde": ["piskefløde", "madlavningsfløde", "kogefløde"],
-  "ris": ["jasminris", "basmatiris", "fuldkornsris", "parboiled"],
-  "pasta": ["fuldkornspasta", "penne", "fusilli", "spaghetti", "tagliatelle", "rigatoni", "farfalle"],
-  "salat": ["icebergsalat", "hjertesalat", "romainesalat", "salathoved"],
-  "tomatsauce": ["pastasauce", "passata"],
-  "nudler": ["ægnudler", "risnudler", "woknudler"],
-  "ost": ["revet ost", "skiveost", "mozzarella", "cheddar", "gouda"],
-};
-// Never an ingredient, whatever the words say.
-const OFFER_EXCLUDE_ALL = ["kattemad", "hundemad", "kattefoder", "hundefoder", "dyrefoder", "shampoo", "vaskemiddel", "opvask"];
-
-function offerFits(term, heading) {
-  const raw = (heading || "").toLowerCase();
-  const h = " " + raw.replace(/[^a-zæøå0-9]+/g, " ");
-  const t = term.toLowerCase();
-  if ([...OFFER_EXCLUDE_ALL, ...(OFFER_EXCLUDE[t] || [])].some(x => raw.includes(x))) return false;
-  if ((OFFER_ALIASES[t] || []).some(a => raw.includes(a))) return true;
-  return t.split(/\s+/).filter(Boolean).every(w => h.includes(" " + w));
-}
-
-// Normal (non-offer) shelf prices per typical pack, in kr. Tjek only knows offers, so the plan uses these
-// rough estimates, and an offer's "før"-price only for ingredients not listed here (a "før"-price can
-// belong to a multipack or a pricier variant, e.g. ginger shots for "ingefær").
-const NORMAL_PRICES = {
-  "kylling": 50, "ris": 22, "kokosmælk": 15, "løg": 10, "hakket oksekød": 50, "spaghetti": 12, "pasta": 12,
-  "hakkede tomater": 8, "kidneybønner": 10, "tortilla": 22, "ost": 40, "salat": 15, "pesto": 25, "nudler": 15,
-  "wokgrøntsager": 25, "lasagneplader": 15, "laks": 65, "kartofler": 20, "broccoli": 15, "hakket svinekød": 38,
-  "æg": 32, "burgerboller": 22, "pizzadej": 20, "skinke": 25, "tomatsauce": 18, "bacon": 25, "røde linser": 22,
-  "ingefær": 8, "hvidløg": 8, "yoghurt": 22, "agurk": 9, "salsiccia": 55, "fløde": 16, "basilikum": 15,
-  "hytteost": 16, "spinat": 15, "tun": 14, "cherrytomater": 18, "rødløg": 10, "skyr": 20, "kalkun": 55,
-  "parmesan": 30, "citron": 6, "græsk yoghurt": 26,
-  "hakket kylling": 45, "rejer": 40, "gulerødder": 10, "bladselleri": 12, "squash": 10, "peberfrugt": 10,
-  "champignon": 15, "søde kartofler": 20, "majs": 10, "ærter": 15, "chili": 8, "avocado": 10, "mozzarella": 15,
-  "creme fraiche": 12, "smør": 25, "mælk": 12, "couscous": 15, "bulgur": 15, "pitabrød": 15, "tomatpuré": 8,
-  "passata": 12, "kikærter": 10, "bouillon": 15, "rødvin": 50, "soja": 15, "karrypasta": 20, "tacokrydderi": 10,
-  "oregano": 15,
-};
-const normalPrice = (term, offers) =>
-  NORMAL_PRICES[term.toLowerCase()] || (offers || []).find(o => o.before && offerFits(term, o.heading))?.before || 25;
-
-// What each starter meal needs for `servings` portions: [quantity, unit] per ingredient.
-const MEAL_AMOUNTS = {
-  "Kylling i karry": [4, { "kylling": [500, "g"], "ris": [300, "g"], "kokosmælk": [400, "ml"], "løg": [1, "stk"] }],
-  "Spaghetti bolognese": [4, { "hakket oksekød": [500, "g"], "spaghetti": [400, "g"], "hakkede tomater": [800, "g"], "løg": [1, "stk"] }],
-  "Chili con carne": [4, { "hakket oksekød": [500, "g"], "kidneybønner": [400, "g"], "hakkede tomater": [800, "g"], "ris": [300, "g"] }],
-  "Tacos": [4, { "hakket oksekød": [500, "g"], "tortilla": [8, "stk"], "ost": [150, "g"], "salat": [1, "stk"] }],
-  "Pasta med kylling og pesto": [4, { "kylling": [500, "g"], "pasta": [400, "g"], "pesto": [190, "g"] }],
-  "Wok med kylling": [4, { "kylling": [500, "g"], "nudler": [250, "g"], "wokgrøntsager": [600, "g"] }],
-  "Lasagne": [4, { "hakket oksekød": [500, "g"], "lasagneplader": [250, "g"], "hakkede tomater": [800, "g"], "ost": [150, "g"] }],
-  "Laks med kartofler": [4, { "laks": [500, "g"], "kartofler": [1000, "g"], "broccoli": [500, "g"] }],
-  "Frikadeller med kartofler": [4, { "hakket svinekød": [500, "g"], "kartofler": [1000, "g"], "æg": [1, "stk"] }],
-  "Burger": [4, { "burgerboller": [4, "stk"], "hakket oksekød": [500, "g"], "ost": [100, "g"], "salat": [1, "stk"] }],
-  "Pizza": [4, { "pizzadej": [1, "stk"], "skinke": [150, "g"], "ost": [200, "g"], "tomatsauce": [200, "g"] }],
-  "Omelet med bacon": [4, { "æg": [8, "stk"], "bacon": [150, "g"], "ost": [100, "g"] }],
-  "Kyllingepasta med hytteostsauce": [4, { "kylling": [600, "g"], "pasta": [400, "g"], "hytteost": [500, "g"], "spinat": [150, "g"], "hvidløg": [3, "fed"] }],
-  "Bolognese med linser": [4, { "hakket oksekød": [500, "g"], "røde linser": [150, "g"], "pasta": [400, "g"], "hakkede tomater": [800, "g"], "løg": [1, "stk"] }],
-  "Tunpasta med cherrytomater": [4, { "tun": [3, "dåse"], "pasta": [400, "g"], "cherrytomater": [250, "g"], "rødløg": [1, "stk"], "skyr": [300, "g"] }],
-  "Kalkunpasta med pesto og spinat": [4, { "kalkun": [600, "g"], "pasta": [400, "g"], "pesto": [130, "g"], "spinat": [150, "g"] }],
-  "Kylling og broccoli i parmesanpasta": [4, { "kylling": [600, "g"], "pasta": [400, "g"], "broccoli": [500, "g"], "parmesan": [60, "g"] }],
-  "Taco pastasalat med oksekød": [4, { "hakket oksekød": [400, "g"], "pasta": [300, "g"], "kidneybønner": [1, "dåse"], "peberfrugt": [1, "stk"], "rødløg": [1, "stk"], "majs": [140, "g"], "cherrytomater": [150, "g"], "salat": [1, "stk"], "cheddar": [100, "g"], "løg": [1, "stk"], "tacokrydderi": [1, "stk"], "creme fraiche": [150, "g"], "mayonnaise": [100, "g"], "salsa": [230, "g"], "lime": [1, "stk"] }],
-  "Svensk pølseret (Gourministeriet)": [4, { "pølser": [8, "stk"], "kartofler": [800, "g"], "løg": [1, "stk"], "hvidløg": [2, "fed"], "paprika": [3, "tsk"], "tomatpuré": [100, "g"], "piskefløde": [3, "dl"], "ketchup": [1, "spsk"], "purløg": [1, "stk"] }],
-  "Mexicansk kartoffelfad med oksekød": [4, { "hakket oksekød": [500, "g"], "kartofler": [800, "g"], "løg": [1, "stk"], "hvidløg": [3, "fed"], "peberfrugt": [2, "stk"], "tacokrydderi": [3, "spsk"], "tomatpuré": [3, "spsk"], "bouillon": [2, "dl"], "fløde": [2, "dl"], "kidneybønner": [1, "dåse"], "cheddar": [80, "g"], "creme fraiche": [100, "g"] }],
-  "Laksepasta med citron og spinat": [4, { "laks": [500, "g"], "pasta": [400, "g"], "spinat": [150, "g"], "skyr": [300, "g"], "citron": [1, "stk"] }],
-};
-// Per ingredient: typical pack size in g/ml (pack), weight of one piece/can (piece) and protein per 100 g (p).
-// Rough Danish supermarket numbers – good enough to count packs and estimate protein.
-const ING = {
-  "kylling": { pack: 500, p: 23 }, "ris": { pack: 1000, p: 7 }, "kokosmælk": { pack: 400, p: 1.5 },
-  "løg": { pack: 1000, piece: 100, p: 1 }, "hakket oksekød": { pack: 500, p: 19 }, "spaghetti": { pack: 500, p: 12 },
-  "pasta": { pack: 500, p: 12 }, "hakkede tomater": { pack: 400, p: 1 }, "kidneybønner": { pack: 400, p: 8 },
-  "tortilla": { pack: 320, piece: 40, p: 8 }, "ost": { pack: 300, p: 25 }, "salat": { pack: 300, piece: 300, p: 1 },
-  "pesto": { pack: 190, p: 5 }, "nudler": { pack: 250, p: 10 }, "wokgrøntsager": { pack: 600, p: 2 },
-  "lasagneplader": { pack: 500, p: 12 }, "laks": { pack: 500, p: 20 }, "kartofler": { pack: 2000, p: 2 },
-  "broccoli": { pack: 400, piece: 400, p: 3 }, "hakket svinekød": { pack: 500, p: 18 }, "æg": { pack: 600, piece: 60, p: 13 },
-  "burgerboller": { pack: 240, piece: 60, p: 9 }, "pizzadej": { pack: 400, piece: 400, p: 7 }, "skinke": { pack: 150, p: 18 },
-  "tomatsauce": { pack: 400, p: 1.5 }, "bacon": { pack: 150, p: 13 }, "røde linser": { pack: 500, p: 24 },
-  "ingefær": { pack: 100, p: 2 }, "hvidløg": { pack: 150, piece: 50, p: 6 }, "yoghurt": { pack: 1000, p: 4 },
-  "agurk": { pack: 350, piece: 350, p: 1 }, "salsiccia": { pack: 400, p: 15 }, "fløde": { pack: 250, p: 2.5 },
-  "basilikum": { pack: 30, p: 3 }, "hytteost": { pack: 250, p: 12 }, "spinat": { pack: 200, p: 3 },
-  "tun": { pack: 185, piece: 130, p: 25 }, "cherrytomater": { pack: 250, p: 1 }, "rødløg": { pack: 500, piece: 100, p: 1 },
-  "skyr": { pack: 450, p: 11 }, "kalkun": { pack: 500, p: 22 }, "parmesan": { pack: 150, p: 33 },
-  "citron": { pack: 100, piece: 100, p: 1 }, "græsk yoghurt": { pack: 1000, p: 9 }, "hakket kylling": { pack: 400, p: 20 },
-  "rejer": { pack: 250, p: 20 }, "gulerødder": { pack: 1000, piece: 80, p: 1 }, "bladselleri": { pack: 400, piece: 40, p: 1 },
-  "squash": { pack: 300, piece: 300, p: 1 }, "peberfrugt": { pack: 150, piece: 150, p: 1 }, "champignon": { pack: 250, p: 3 },
-  "søde kartofler": { pack: 1000, piece: 300, p: 2 }, "majs": { pack: 340, p: 3 }, "ærter": { pack: 450, p: 5 },
-  "chili": { pack: 50, piece: 10, p: 2 }, "avocado": { pack: 150, piece: 150, p: 2 }, "mozzarella": { pack: 125, piece: 125, p: 18 },
-  "creme fraiche": { pack: 200, p: 3 }, "smør": { pack: 250, p: 1 }, "mælk": { pack: 1000, p: 3.5 },
-  "couscous": { pack: 500, p: 12 }, "bulgur": { pack: 500, p: 12 }, "pitabrød": { pack: 360, piece: 60, p: 9 },
-  "tomatpuré": { pack: 140, p: 4 }, "passata": { pack: 500, p: 1.5 }, "kikærter": { pack: 400, p: 7 },
-  "bouillon": { pack: 3000, p: 0 }, "rødvin": { pack: 750, p: 0 }, "soja": { pack: 150, p: 8 },
-  "karrypasta": { pack: 100, p: 2 }, "tacokrydderi": { pack: 30, p: 0 }, "oregano": { pack: 10, p: 0 }, "mynte": { pack: 30, p: 3 },
-};
-// Rough price (kr.), pack size (g), protein (g/100 g) and piece weight for the rest of the catalogue.
-const EXTRA_ING = {
-  "skalotteløg": [15, 250, 1, 30], "forårsløg": [10, 100, 2, 15], "porre": [8, 300, 1, 300], "pastinak": [15, 500, 1, 150],
-  "rødbeder": [12, 500, 2, 150], "knoldselleri": [15, 700, 1, 700], "aubergine": [12, 300, 1, 300], "svampe": [25, 250, 3],
-  "grønkål": [20, 250, 4], "blomkål": [20, 700, 2, 700], "rosenkål": [20, 500, 3], "spidskål": [15, 800, 1, 800],
-  "hvidkål": [12, 1000, 1, 1000], "rødkål": [12, 1000, 1, 1000], "grønne bønner": [20, 400, 2], "sukkerærter": [20, 150, 3],
-  "tomater": [15, 500, 1, 100], "rucola": [15, 65, 3], "lime": [5, 70, 1, 70], "persille": [12, 30, 3], "frisk koriander": [12, 30, 3],
-  "mynte": [15, 30, 3], "dild": [12, 30, 3], "purløg": [12, 30, 3],
-  "bananer": [15, 1000, 1, 120], "æbler": [20, 1000, 0, 150], "pærer": [20, 1000, 0, 170], "appelsiner": [20, 1000, 1, 200],
-  "blåbær": [25, 125, 1], "jordbær": [25, 400, 1], "hindbær": [25, 125, 1], "mango": [15, 400, 1, 400], "ananas": [20, 1000, 0, 1000],
-  "druer": [20, 500, 1], "rosiner": [15, 250, 3], "dadler": [25, 250, 2],
-  "penne": [12, 500, 12], "tagliatelle": [20, 500, 12], "basmatiris": [25, 1000, 7], "quinoa": [30, 500, 14], "havregryn": [12, 1000, 13],
-  "müsli": [30, 750, 10], "naanbrød": [20, 260, 9, 130], "rugbrød": [20, 1000, 6, 50], "toastbrød": [15, 600, 9, 25], "brød": [25, 700, 9, 40],
-  "kyllingelår": [40, 1000, 18, 120], "hakket kalv og flæsk": [40, 500, 17], "oksebøf": [60, 300, 22, 150], "oksekød i tern": [70, 500, 21],
-  "svinemørbrad": [60, 500, 21], "nakkekoteletter": [45, 700, 18, 175], "flæsk": [35, 500, 14], "pølser": [30, 400, 12, 80],
-  "chorizo": [25, 150, 24], "kyllingepålæg": [20, 100, 20],
-  "torsk": [60, 400, 18], "makrel": [12, 125, 15], "fiskefrikadeller": [30, 400, 10, 50],
-  "madlavningsfløde": [12, 250, 3], "revet ost": [25, 175, 25], "feta": [20, 200, 14], "halloumi": [30, 225, 21], "flødeost": [15, 200, 6],
-  "kvark": [15, 500, 11], "proteinbudding": [12, 200, 10, 200],
-  "grønne linser": [20, 500, 24], "sorte bønner": [10, 400, 8], "hvide bønner": [10, 400, 7], "edamame": [25, 400, 11],
-  "nødder": [30, 200, 18], "mandler": [30, 200, 21], "peanuts": [20, 300, 25], "peanutbutter": [30, 350, 25],
-  "solsikkekerner": [15, 250, 21], "chiafrø": [25, 200, 17],
-  "fiskesauce": [20, 200, 5], "sød chilisauce": [20, 250, 0], "sriracha": [25, 435, 1], "ketchup": [20, 500, 1], "sennep": [15, 400, 6],
-  "mayonnaise": [20, 400, 1], "salsa": [20, 300, 1], "tahin": [30, 300, 17], "honning": [30, 450, 0], "hvidvin": [50, 750, 0],
-  "frossen spinat": [15, 450, 3], "frosne bær": [30, 500, 1], "pommes frites": [20, 1000, 3], "frosne grøntsager": [20, 600, 2],
-  "timian": [15, 10, 0], "paprika": [15, 30, 0], "spidskommen": [15, 30, 0], "karry": [15, 30, 0], "garam masala": [20, 30, 0],
-  "gurkemeje": [15, 30, 0], "kanel": [15, 30, 0], "chiliflager": [15, 30, 0], "hvidløgspulver": [15, 30, 0],
-};
-for (const [t, [price, pack, p, piece]] of Object.entries(EXTRA_ING)) {
-  NORMAL_PRICES[t] ??= price;
-  ING[t] ??= piece ? { pack, piece, p } : { pack, p };
-}
-// REMA 1000's normal price (kr.), pack (g) and per 100 g: kcal, fat, carbs, protein – from REMA's webshop catalogue
-// (shop.rema1000.dk, fetched 3. okt. 2026; produce and spices have standard values). null = unknown.
-const REMA_DATA = {
-  "løg": [12, 1000, 40, 0.1, 8, 1.1],
-  "rødløg": [8, 500, 40, 0.1, 8, 1.1],
-  "skalotteløg": [10, 200, 72, 0.1, 17, 2.5],
-  "forårsløg": [8.5, null, 32, 0.2, 6, 1.8],
-  "porre": [6, null, 31, 0.3, 6, 1.5],
-  "hvidløg": [6, 90, 149, 0.5, 33, 6.4],
-  "gulerødder": [12, 1000, 41, 0.2, 8, 0.9],
-  "kartofler": [18, 2000, 77, 0.1, 17, 2],
-  "små kartofler": [10, 650, 77, 0.1, 17, 2],
-  "søde kartofler": [7, null, 86, 0.1, 20, 1.6],
-  "pastinak": [1.88, 130, 75, 0.3, 18, 1.2],
-  "persillerod": [1.5, 100, 55, 0.6, 10, 2.3],
-  "rødbeder": [28.23, 375, 71.0, 0.5, 16.0, 0.7],
-  "jordskokker": [1.5, 100, 73, 0, 17, 2],
-  "knoldselleri": [15, null, 42, 0.3, 9, 1.5],
-  "bladselleri": [17, null, 16, 0.2, 3, 0.7],
-  "fennikel": [11, null, 31, 0.2, 7, 1.2],
-  "squash": [8, null, 17, 0.3, 3, 1.2],
-  "hokkaido": [18, null, 40, 0.1, 9, 1.3],
-  "aubergine": [9, null, 25, 0.2, 6, 1],
-  "peberfrugt": [9, null, 31, 0.3, 6, 1],
-  "champignon": [19, 400, 22, 0.3, 3, 3.1],
-  "portobello": [20, 250, 22, 0.3, 3, 3.1],
-  "kantareller": [35, 150, 32, 0.5, 7, 1.5],
-  "spinat": [19, 250, 23, 0.4, 3.6, 2.9],
-  "grønkål": [20.06, 250, 61.0, 1.2, 4.7, 4.7],
-  "pak choi": [17, null, 13, 0.2, 2, 1.5],
-  "broccoli": [13.95, 400, 28.0, 0.5, 1.9, 2.8],
-  "blomkål": [17, null, 25, 0.3, 5, 1.9],
-  "rosenkål": [12, 400, 43, 0.3, 9, 3.4],
-  "spidskål": [13, null, 25, 0.1, 6, 1.3],
-  "hvidkål": [8, 1000, 25, 0.1, 6, 1.3],
-  "rødkål": [28.23, 580, 102.0, 0.5, 22.0, 1.3],
-  "grønne bønner": [18, 400, 31, 0.2, 7, 1.8],
-  "sukkerærter": [15, 125, 42, 0.2, 7.5, 2.8],
-  "asparges": [28, 250, 20, 0.1, 3.9, 2.2],
-  "majs": [7.91, 285, 79.0, 1.7, 12.0, 2.6],
-  "agurk": [10, null, 15, 0.1, 3.6, 0.7],
-  "tomater": [18, 500, 18, 0.2, 3.9, 0.9],
-  "cherrytomater": [15, 250, 18, 0.2, 3.9, 0.9],
-  "salat": [15, null, 15, 0.2, 2.9, 1.4],
-  "icebergsalat": [12, null, 14, 0.1, 3, 0.9],
-  "rucola": [10, 75, 25, 0.7, 3.7, 2.6],
-  "feldsalat": [10, 75, 21, 0.4, 3.6, 2],
-  "radiser": [9, null, 16, 0.1, 3.4, 0.7],
-  "avocado": [19, null, 160, 15, 9, 2],
-  "chili": [13, 70, 40, 0.4, 9, 1.9],
-  "ingefær": [14, 200, 80, 0.8, 18, 1.8],
-  "citron": [5, null, 29, 0.3, 9, 1.1],
-  "lime": [3, 60, 30, 0.2, 11, 0.7],
-  "persille": [13.05, 75, 42.0, 0.5, 7.4, 4.4],
-  "basilikum": [15, null, 23, 0.6, 2.7, 3.2],
-  "frisk koriander": [15, null, 23, 0.5, 3.7, 2.1],
-  "mynte": [15, null, 44, 0.7, 8, 3.3],
-  "dild": [10, null, 43, 1.1, 7, 3.5],
-  "purløg": [10, null, 30, 0.7, 4, 3.3],
-  "rosmarin": [15, 21, 131, 6, 21, 3.3],
-  "karse": [7, null, 32, 0.7, 5.5, 2.6],
-  "bananer": [2.5, null, 89, 0.3, 23, 1.1],
-  "æbler": [2.5, null, 52, 0.2, 14, 0.3],
-  "pærer": [22, 1000, 57, 0.1, 15, 0.4],
-  "appelsiner": [3.5, null, 47, 0.1, 12, 0.9],
-  "clementiner": [2.5, null, 47, 0.2, 12, 0.9],
-  "kiwi": [20, 500, 61, 0.5, 15, 1.1],
-  "nektariner": [null, null, 44, 0.3, 11, 1.1],
-  "blommer": [2.5, null, 46, 0.3, 11, 0.7],
-  "blåbær": [18, 125, 57, 0.3, 14, 0.7],
-  "jordbær": [12, 400, 41.0, 0.5, 8.1, 0.8],
-  "hindbær": [23, 125, 52, 0.7, 12, 1.2],
-  "druer": [24, 500, 69, 0.2, 18, 0.7],
-  "melon": [25, null, 36, 0.1, 9, 0.5],
-  "mango": [14, null, 60, 0.4, 15, 0.8],
-  "ananas": [20, null, 50, 0.1, 13, 0.5],
-  "granatæble": [12, null, 83, 1.2, 19, 1.7],
-  "passionsfrugt": [4, null, 97, 0.7, 23, 2.2],
-  "dadler": [25, 400, 280, 0.4, 75, 2.5],
-  "rosiner": [12.95, 250, 328.0, 0.5, 75.0, 3.3],
-  "figner": [15, null, 74, 0.3, 19, 0.8],
-  "pasta": [5.95, 500, 367.0, 1.5, 75.0, 12.0],
-  "spaghetti": [8.95, 1000, 367.0, 1.5, 75.0, 12.0],
-  "penne": [8.72, 500, 347.0, 1.8, 69.0, 11.0],
-  "fusilli": [12.17, 500, 350.0, 2.2, 67.0, 12.0],
-  "rigatoni": [13.5, 500, 351.0, 1.0, 70.0, 14.0],
-  "tagliatelle": [null, null, 360, 1.5, 72, 13],
-  "lasagneplader": [9.95, 500, 369.0, 3.8, 68.0, 14.0],
-  "frisk pasta": [13.95, 500, 282.0, 1.7, 57.0, 8.7],
-  "tortellini": [13.16, 250, 308.0, 7.4, 47.0, 12.0],
-  "gnocchi": [19.96, 500, 153.0, 1.3, 30.0, 4.1],
-  "nudler": [8.07, 250, 361.0, 3.4, 61.0, 16.0],
-  "risnudler": [10.14, 200, 351.0, 0.7, 80.0, 5.6],
-  "ris": [11.95, 1000, 353.0, 1.0, 78.0, 7.5],
-  "jasminris": [15.02, 1000, 357.0, 1.2, 78.0, 8.0],
-  "basmatiris": [17.95, 1000, 357.0, 1.2, 77.0, 9.0],
-  "brune ris": [16.57, 1000, 349.0, 2.5, 72.0, 8.0],
-  "risottoris": [23.01, 500, 347.0, 1.3, 75.0, 8.2],
-  "couscous": [15.16, 400, 379.0, 2.3, 72.0, 14.0],
-  "bulgur": [15.16, 400, 328.0, 2.3, 62.0, 11.0],
-  "quinoa": [18.95, 400, 304.0, 5.7, 45.0, 14.0],
-  "havregryn": [7.95, 1000, 369.0, 6.9, 57.0, 14.0],
-  "müsli": [27.95, 750, 433.0, 12.0, 69.0, 9.0],
-  "cornflakes": [22.28, 750, 376.0, 1.0, 82.0, 8.1],
-  "tortilla": [10.7, 370, 328.0, 7.3, 55.0, 9.4],
-  "taco shells": [14.95, 135, 477.0, 22.0, 63.0, 5.8],
-  "pitabrød": [12.95, 375, 264.0, 3.6, 47.0, 8.9],
-  "naanbrød": [12.2, 260, 290.0, 5.9, 48.0, 9.5],
-  "burgerboller": [15, 330, 294.0, 5.5, 50.0, 9.6],
-  "pizzadej": [10.95, 400, 271.0, 4.0, 44.0, 8.5],
-  "butterdej": [11.95, 275, 380.0, 23.0, 35.0, 5.6],
-  "tærtedej": [11.95, 275, 348.0, 14.0, 46.0, 5.3],
-  "rugbrød": [26.5, 950, 242.0, 7.3, 33.0, 6.6],
-  "toastbrød": [6, 375, 257.0, 3.1, 48.0, 7.4],
-  "brød": [null, null, 250, 3, 48, 8],
-  "boller": [26.5, 500, 296.0, 8.5, 43.0, 9.7],
-  "panko": [13.11, 200, 358.0, 1.6, 73.0, 11.0],
-  "kylling": [34.95, 450, 99.0, 1.6, 0.5, 21.0],
-  "kyllingebryst": [34.95, 450, 99.0, 1.6, 0.5, 21.0],
-  "kyllingeinderfilet": [25.65, 300, 101.0, 0.5, 0.5, 24.0],
-  "kyllingelårfilet": [29.95, 400, 157.0, 9.0, 0.5, 19.0],
-  "kyllingelår": [44.95, 1250, 194.0, 14.0, 0.5, 17.0],
-  "kyllingeunderlår": [29.95, 700, 120.0, 4.4, 0.5, 20.0],
-  "kyllingevinger": [32.95, 500, 139.0, 7.0, 0.5, 19.0],
-  "hel kylling": [89, 1100, 184.0, 12.0, 0.5, 19.0],
-  "hakket kylling": [29, 400, 121.0, 4.5, 0.5, 20.0],
-  "kalkun": [null, null, 110, 1.5, 0, 24],
-  "hakket oksekød": [39.95, 400, 170, 10, 0, 20],
-  "hakket svinekød": [24.95, 500, 175, 11, 0, 19],
-  "hakket gris og kalv": [29.95, 500, 172.0, 10.0, 0.5, 20.0],
-  "oksekød i tern": [49, 300, 117.0, 3.6, 0.5, 21.0],
-  "tykstegsbøf": [59.95, 300, 112.0, 2.9, 0.5, 21.0],
-  "højrebsbøf": [79.95, 360, 190, 12, 0, 21],
-  "rib eye": [79.95, 180, 195.0, 12.0, 0.5, 21.0],
-  "culotte": [229.89, 1150, 169.0, 10.0, 0.5, 19.0],
-  "svinemørbrad": [47.94, 600, 118.0, 3.8, 0.5, 21.0],
-  "nakkefilet": [79.9, 1000, 176.0, 12.0, 0.5, 17.0],
-  "koteletter": [29.95, 400, 133.0, 5.0, 0.5, 22.0],
-  "nakkekoteletter": [34.95, 300, 227.0, 17.0, 0.5, 18.0],
-  "skinkeschnitzel": [32.95, 250, 121.0, 3.4, 0.6, 22.0],
-  "flæskesteg": [57.86, 1450, 240.0, 18.0, 0.5, 19.0],
-  "flæsk": [29.95, 400, 316.0, 28.0, 0.5, 16.0],
-  "medister": [24.95, 500, 178.0, 12.0, 5.5, 12.0],
-  "frikadeller": [34.95, 360, 210.0, 14.0, 6.5, 14.0],
-  "kødboller": [55.11, 700, 172.0, 12.0, 6.0, 10.0],
-  "bacon": [12.95, 200, 267.0, 23.0, 0.5, 15.0],
-  "skinke": [13.59, 150, 112.0, 3.6, 0.9, 19.0],
-  "pølser": [24.95, 550, 252.0, 20.0, 4.9, 13.0],
-  "chorizo": [9.95, 80, 355.0, 28.0, 0.5, 25.0],
-  "salsiccia": [27.95, 200, 311.0, 27.0, 0.5, 17.0],
-  "pepperoni": [14.95, 100, 438.0, 40.0, 1.4, 18.0],
-  "kyllingepålæg": [20.14, 150, 133.0, 4.0, 1.0, 23.0],
-  "lammeculotte": [79, 300, 198.0, 14.0, 0.5, 18.0],
-  "andebryst": [20, 160, 289.0, 25.0, 1.0, 15.0],
-  "laks": [43.95, 225, 224.0, 16.0, 0.5, 20.0],
-  "torsk": [49.95, 225, 77.0, 0.6, 0.5, 18.0],
-  "kuller": [45, 400, 78.0, 0.6, 0.5, 18.0],
-  "mørksej": [59.95, 300, 78.0, 0.7, 0.5, 18.0],
-  "rødspætte": [39, 225, 86.0, 1.5, 0.5, 18.0],
-  "tun": [9.95, 140, 127.0, 1.2, 0.5, 29.0],
-  "rejer": [31.95, 170, 78.0, 1.5, 0.5, 16.0],
-  "makrel": [14.95, 125, 124.0, 8.9, 2.7, 8.3],
-  "fiskefars": [34.95, 400, 113.0, 3.0, 9.5, 12.0],
-  "fiskefrikadeller": [14.95, 120, 110.0, 2.8, 10.0, 11.0],
-  "fiskepinde": [27.5, 450, 189.0, 8.4, 16.0, 12.0],
-  "æg": [31.95, null, 139.0, 9.5, 1.1, 12.0],
-  "mælk": [10.95, 1000, 46.0, 1.5, 4.6, 3.5],
-  "kærnemælk": [13.95, 1000, 34.0, 0.5, 3.8, 3.3],
-  "smør": [19.95, 200, 707.0, 78.0, 0.7, 0.6],
-  "fløde": [14.95, 500, 346.0, 36.0, 3.3, 2.2],
-  "piskefløde": [14.95, 500, 346.0, 36.0, 3.3, 2.2],
-  "madlavningsfløde": [13.95, 250, 109.0, 7.6, 6.9, 3.4],
-  "creme fraiche": [18.95, 500, 188.0, 18.0, 3.0, 2.8],
-  "skyr": [19.95, 1000, 60.0, 0.5, 3.8, 10.0],
-  "græsk yoghurt": [18.95, 400, 132.0, 10.0, 4.5, 6.0],
-  "yoghurt": [9.95, 1000, 63.0, 3.5, 3.6, 3.6],
-  "ymer": [21.95, 1000, 71.0, 3.5, 3.4, 5.6],
-  "kvark": [null, null, 65, 0.2, 4, 12],
-  "proteinbudding": [14.95, 200, 76.0, 1.5, 7.8, 10.0],
-  "ost": [24.95, 500, 283.0, 21.0, 9.0, 15.0],
-  "revet ost": [24.95, 500, 283.0, 21.0, 9.0, 15.0],
-  "skiveost": [22.95, 300, 325.0, 25.0, 0.5, 24.0],
-  "mozzarella": [14.36, 200, 260.0, 15.0, 3.2, 27.0],
-  "parmesan": [37.95, 200, 398.0, 29.0, 0.5, 33.0],
-  "cheddar": [14.95, 150, 390.0, 31.0, 3.0, 25.0],
-  "feta": [19.95, 200, 260.0, 22.0, 0.5, 15.0],
-  "halloumi": [22.95, 250, 245.0, 19.0, 3.0, 17.0],
-  "hytteost": [14.92, 450, 75.0, 1.5, 2.3, 13.0],
-  "flødeost": [19.95, 150, 251.0, 25.0, 2.8, 4.5],
-  "ricotta": [12.95, 250, 97.0, 6.0, 3.7, 7.0],
-  "mascarpone": [22.95, 250, 399.0, 41.0, 3.5, 4.0],
-  "brie": [29.95, 350, 283.0, 23.0, 0.5, 19.0],
-  "røde linser": [16.95, 400, 346.0, 2.2, 52.0, 24.0],
-  "grønne linser": [16.95, 400, 352.0, 2.0, 53.0, 25.0],
-  "kikærter": [7.86, 240, 117.0, 2.2, 15.0, 6.8],
-  "kidneybønner": [7.15, 240, 107.0, 0.8, 14.0, 7.9],
-  "sorte bønner": [7.78, 252, 107.0, 1.0, 13.0, 8.1],
-  "hvide bønner": [7.15, 420, 94.0, 0.5, 15.0, 5.0],
-  "edamame": [14.95, 300, 130.0, 7.2, 2.8, 11.0],
-  "tofu": [16.95, 200, 87.0, 4.2, 0.5, 11.0],
-  "nødder": [15.95, 66, 597.0, 49.0, 14.0, 22.0],
-  "mandler": [8.95, 100, 617.0, 53.0, 5.0, 25.0],
-  "cashewnødder": [22.03, 150, 588.0, 46.0, 22.0, 18.0],
-  "peanuts": [9.25, 250, 626.0, 51.0, 14.0, 26.0],
-  "valnødder": [13.95, 100, 686.0, 65.0, 7.0, 15.0],
-  "peanutbutter": [25, 340, 607.0, 48.0, 17.0, 25.0],
-  "solsikkekerner": [11.5, 400, 616.0, 54.0, 3.6, 24.0],
-  "græskarkerner": [12.38, 150, 591.0, 49.0, 2.0, 34.0],
-  "chiafrø": [19.95, 300, 453.0, 33.0, 4.0, 18.0],
-  "sesamfrø": [12.95, 150, 657.0, 57.0, 4.6, 27.0],
-  "hakkede tomater": [6.37, 400, 24.0, 0.5, 4.1, 1.0],
-  "flåede tomater": [6.37, 400, 22.0, 0.5, 3.8, 1.2],
-  "passata": [8.69, 500, 31.0, 0.5, 4.5, 1.5],
-  "tomatpuré": [12.95, 200, 84.0, 0.5, 15.0, 3.9],
-  "tomatsauce": [19.95, 400, 66.0, 3.3, 6.7, 1.9],
-  "pizzasauce": [9.61, 280, 61.0, 3.3, 5.1, 1.4],
-  "kokosmælk": [8.95, 400, 185.0, 18.0, 3.8, 1.3],
-  "pesto": [7.16, 130, 465.0, 46.0, 7.3, 4.5],
-  "bouillon": [5.5, 100, 272.0, 20.0, 19.0, 3.7],
-  "soja": [10.5, 250, 38.0, 0.5, 6.4, 3.1],
-  "østerssauce": [16.5, 150, 93.0, 0.5, 22.0, 1.2],
-  "fiskesauce": [16.95, 150, 75.0, 0.5, 5.7, 13.0],
-  "hoisin": [5, 40, 227.0, 1.6, 51.0, 1.7],
-  "karrypasta": [11.91, 110, 222.0, 18.0, 10.0, 2.2],
-  "sød chilisauce": [16.95, 500, 194.0, 0.5, 47.0, 0.5],
-  "sriracha": [null, null, 93, 1, 19, 2],
-  "ketchup": [8.8, 520, 105.0, 0.5, 23.0, 1.3],
-  "sennep": [12.95, 370, 149.0, 12.0, 3.2, 7.2],
-  "mayonnaise": [12.12, 400, 598.0, 66.0, 0.5, 0.7],
-  "salsa": [10.95, 315, 53.0, 0.5, 11.0, 1.0],
-  "tahin": [24.95, 300, 691.0, 65.0, 5.0, 20.0],
-  "honning": [null, null, 304, 0, 82, 0.3],
-  "oliven": [12.16, 140, 134.0, 14.0, 0.5, 0.5],
-  "kapers": [7.89, 60, 37.0, 0.6, 4.0, 3.0],
-  "soltørrede tomater": [13.93, 280, 393.0, 39.0, 6.3, 2.9],
-  "rødvin": [null, null, 85, 0, 2.6, 0.1],
-  "hvidvin": [null, null, 82, 0, 2.6, 0.1],
-  "olivenolie": [49.95, 750, 828.0, 92.0, 0.5, 0.5],
-  "rapsolie": [19.09, 1000, 828.0, 92.0, 0.5, 0.5],
-  "wokgrøntsager": [13.95, 450, 31.0, 0.5, 4.6, 1.3],
-  "ærter": [10.36, 600, 75.0, 0.7, 8.5, 6.0],
-  "frossen spinat": [9.95, 750, 19.0, 0.6, 0.5, 2.2],
-  "frossen broccoli": [13.95, 400, 28.0, 0.5, 1.9, 2.8],
-  "frosne bær": [16.95, 200, 46.0, 0.5, 7.7, 1.2],
-  "pommes frites": [9.95, 1000, 127.0, 5.1, 18.0, 1.6],
-  "frosne grøntsager": [12.95, 500, 39.0, 0.5, 6.0, 1.9],
-  "blomkålsris": [13.95, 350, 28.0, 0.5, 3.7, 2.0],
-  "tacokrydderi": [5.25, 40, 313.0, 4.5, 59.0, 6.2],
-  "oregano": [5.95, 25, 265, 4, 69, 9],
-  "timian": [7.4, 30, 276, 7, 64, 9],
-  "paprika": [9.67, 45, 282, 13, 54, 14],
-  "røget paprika": [15, 37, 349.0, 17.0, 13.0, 15.0],
-  "spidskommen": [21.39, 33, 428.0, 22.0, 34.0, 18.0],
-  "karry": [5.95, 90, 325, 14, 56, 14],
-  "garam masala": [null, null, 379, 15, 45, 15],
-  "gurkemeje": [9.67, 40, 312, 3, 67, 10],
-  "kanel": [7.95, 70, 247, 1, 81, 4],
-  "chiliflager": [15, 28, 376.0, 17.0, 29.0, 12.0],
-  "hvidløgspulver": [14.47, 55, 331, 0.7, 73, 17],
-  "laurbærblade": [3.75, 8, 313, 8, 75, 8],
-  "kardemomme": [17.72, 30, 311, 7, 68, 11],
-  "koriander": [14.67, 35, 298, 18, 55, 12],
-  "muskatnød": [10.95, 14, 525, 36, 49, 6],
-  "salt": [null, null, 0, 0, 0, 0],
-  "peber": [8.95, 100, 251, 3, 64, 10],
-};
-for (const [t, [price, pack, kcal, f, c, p]] of Object.entries(REMA_DATA)) {
-  if (price != null) NORMAL_PRICES[t] = price;
-  const cur = ING[t] || {};
-  ING[t] = { ...cur, pack: pack || cur.piece || cur.pack || 100, ...(kcal != null ? { kcal, f, c, p } : {}) };
-}
-// Weight of one piece (g) for things recipes count in pieces ("4 kyllingebryst", "2 løg").
-const PIECE_G = {
-  "kylling": 150, "kyllingebryst": 150, "kyllingeinderfilet": 50, "kyllingelårfilet": 100, "kyllingelår": 250, "kyllingeunderlår": 110,
-  "kyllingevinger": 50, "hel kylling": 1300, "laks": 125, "torsk": 125, "kuller": 125, "mørksej": 125, "rødspætte": 100, "tykstegsbøf": 150,
-  "højrebsbøf": 180, "rib eye": 180, "koteletter": 130, "nakkekoteletter": 150, "skinkeschnitzel": 125, "svinemørbrad": 500, "pølser": 70,
-  "frikadeller": 50, "kødboller": 25, "fiskefrikadeller": 50, "medister": 500, "salsiccia": 100, "andebryst": 300, "porre": 200,
-  "tomater": 100, "kartofler": 100, "små kartofler": 40, "rødbeder": 150, "fennikel": 250, "hokkaido": 1000, "blomkål": 700, "broccoli": 400,
-  "spidskål": 800, "hvidkål": 1000, "rødkål": 1000, "icebergsalat": 400, "pak choi": 150, "majs": 285, "ingefær": 30, "persille": 30,
-  "basilikum": 30, "frisk koriander": 30, "mynte": 30, "dild": 30, "purløg": 30, "rosmarin": 10, "lime": 60, "appelsiner": 200, "kiwi": 75,
-  "æbler": 150, "pærer": 170, "bananer": 120, "mango": 300, "melon": 1000, "ananas": 1000, "granatæble": 250, "brød": 40, "boller": 60,
-  "toastbrød": 25, "rugbrød": 50, "taco shells": 11, "hakkede tomater": 400, "flåede tomater": 400, "kokosmælk": 400, "kidneybønner": 240,
-  "kikærter": 240, "sorte bønner": 240, "hvide bønner": 240, "tun": 130, "mozzarella": 125, "feta": 200, "halloumi": 225, "tofu": 200,
-};
-for (const [t, g] of Object.entries(PIECE_G)) ING[t] = { ...(ING[t] || { pack: g, p: 0 }), piece: g };
-const UNITS = ["g", "kg", "ml", "dl", "l", "stk", "fed", "dåse", "spsk", "tsk", "håndfuld"];
-const UNIT_G = { g: 1, kg: 1000, ml: 1, dl: 100, l: 1000, spsk: 15, tsk: 5, håndfuld: 25, knivspids: 1, fed: 5 };
-// Grams of an amount: pieces and cans use the ingredient's piece weight.
-function toGrams(term, q, u) {
-  if (!(q > 0)) return 0;
-  if (UNIT_G[u]) return q * UNIT_G[u];
-  const info = ING[term] || {};
-  if (u === "dåse") return q * (info.piece || 400);
-  return q * (info.piece || info.pack || 100); // stk, bundt, …
-}
-const mealServings = (m) => +m.servings || MEAL_AMOUNTS[m.name]?.[0] || 4;
-const mealAmounts = (m) => m.amounts || MEAL_AMOUNTS[m.name]?.[1] || {};
-// Grams of one ingredient per portion, or null when the meal doesn't say how much.
-function perPortion(m, term) {
-  const a = mealAmounts(m)[term];
-  return a ? toGrams(term, a[0], a[1]) / mealServings(m) : null;
-}
-// Energy, protein, fat and carbs per portion; null when less than half the ingredients have an amount.
-function mealMacros(m) {
-  const terms = m.ingredients || [];
-  const known = terms.filter(t => mealAmounts(m)[t]);
-  if (!terms.length || known.length < terms.length / 2) return null;
-  const sum = (k) => Math.round(known.reduce((s, t) => s + perPortion(m, t) * (ING[t]?.[k] || 0) / 100, 0));
-  return { kcal: sum("kcal"), p: sum("p"), f: sum("f"), c: sum("c") };
-}
-const mealProtein = (m) => mealMacros(m)?.p ?? null;
-const nice = (x) => x >= 10 ? Math.round(x) : Math.round(x * 2) / 2;
-// "1.250 g" → "1,3 kg", "0.5 stk" → "½ stk".
-function fmtAmount(q, u) {
-  if (!(q > 0)) return "";
-  if (u === "g" && q >= 1000) return `${String(Math.round(q / 100) / 10).replace(".", ",")} kg`;
-  if (u === "ml" && q >= 100) return `${String(Math.round(q / 10) / 10).replace(".", ",")} dl`;
-  if (u === "g" || u === "ml") return `${q < 100 ? Math.round(q / 5) * 5 || Math.round(q) : Math.round(q / 25) * 25} ${u}`;
-  const v = nice(q), whole = Math.floor(v), half = v - whole >= .5;
-  return `${whole || !half ? whole : ""}${half ? "½" : ""} ${u}`;
-}
-
-// Things most kitchens always have; they're never bought for a plan.
-const BASICS = ["salt", "peber", "olie", "olivenolie", "rapsolie", "sukker", "hvedemel", "eddike", "bouillon", "karry", "spidskommen", "koriander", "kardemomme", "chiliflager", "oregano", "timian", "paprika", "kanel", "muskatnød", "soja"];
-// Recipe lines like "800 g hakkede tomater på dåse" → { q: 800, u: "g", term: "hakkede tomater", line }.
-const KNOWN_TERMS = [...new Set([...Object.keys(ING), ...INGREDIENT_GROUPS.flatMap(([, l]) => l), ...BASICS])].sort((a, b) => b.length - a.length);
-const LINE_UNITS = { g: "g", gram: "g", kg: "kg", ml: "ml", dl: "dl", l: "l", liter: "l", stk: "stk", fed: "fed", dåse: "dåse", dåser: "dåse", spsk: "spsk", tsk: "tsk", håndfuld: "håndfuld", håndfulde: "håndfuld", knivspids: "knivspids", bdt: "stk", bundt: "stk", stængler: "stk", stængel: "stk", skiver: "stk", pakke: "stk", pk: "stk" };
-const SKIP_LINES = /^(salt|peber|vand|salt og (friskkværnet |sort )?peber|evt\.?)\b/;
-function parseIngredientLine(line) {
-  let s = line.toLowerCase().replace(/\(.*?\)/g, "").split(",")[0].trim();
-  const frac = { "½": .5, "¼": .25, "¾": .75 };
-  const m = s.match(/^(\d+(?:[.,]\d+)?)?\s*([½¼¾])?(?:\s*-\s*\d+(?:[.,]\d+)?)?\s*/);
-  let q = (m[1] ? parseFloat(m[1].replace(",", ".")) : 0) + (m[2] ? frac[m[2]] : 0);
-  s = s.slice(m[0].length);
-  let u = "stk";
-  const w = s.split(/\s+/)[0];
-  if (LINE_UNITS[w]) { u = LINE_UNITS[w]; s = s.slice(w.length).trim(); }
-  if (!q) { q = 0; u = "stk"; }
-  s = s.replace(/\b(frisk|friske|stødt|tørret|tørrede|finthakket|groftrevet|fintrevet|revet|koncentreret|på dåse|økologisk|små|store|stor|lille|evt\.?)\b/g, " ")
-    .replace(/\d+\s*%/g, " ").replace(/\s+/g, " ").trim();
-  if (!s || SKIP_LINES.test(s)) return null;
-  const h = " " + s;
-  const term = KNOWN_TERMS.find(t => t.split(" ").every(x => h.includes(" " + x))) || KNOWN_TERMS.find(t => t.length >= 5 && s.includes(t)) || s;
-  return { q, u, term, line };
-}
-// A recipe from the worker → a meal: duplicate ingredients in the same unit are added together.
-function mealFromRecipe(r, url) {
-  const amounts = {}, ingredients = [];
-  for (const line of r.ingredients || []) {
-    const x = parseIngredientLine(line);
-    if (!x) continue;
-    if (!ingredients.includes(x.term)) ingredients.push(x.term);
-    const a = amounts[x.term];
-    if (!x.q) continue;
-    if (!a) amounts[x.term] = [x.q, x.u];
-    else if (a[1] === x.u) a[0] += x.q;
-    else amounts[x.term] = [toGrams(x.term, ...a) + toGrams(x.term, x.q, x.u), "g"];
-  }
-  // The main ingredient (first in the plan's variety rule) is the one with the most grams.
-  ingredients.sort((a, b) => (amounts[b] ? toGrams(b, ...amounts[b]) : 0) - (amounts[a] ? toGrams(a, ...amounts[a]) : 0));
-  return { name: r.name || "Ny ret", ingredients, amounts, servings: r.servings || 4, url, image: r.image || null,
-    lines: r.ingredients || [], steps: r.steps || null, minutes: r.minutes || null };
-}
-
-// Whether a pantry item covers an ingredient ("græsk yoghurt" covers "yoghurt", "olie" covers "olivenolie").
-const covers = (have, term) => have === term || (have.length >= 4 && term.endsWith(have)) || offerFits(term, have);
-// Shop walk order for the shopping list.
-const AISLES = [...INGREDIENT_GROUPS.map(([g]) => g), "Andet"];
-const aisleOf = (name) => {
-  const n = name.toLowerCase();
-  return INGREDIENT_GROUPS.find(([, l]) => l.includes(n))?.[0] || INGREDIENT_GROUPS.find(([, l]) => l.some(t => covers(t, n)))?.[0]
-    || "Andet";
-};
-const packsFor = (term, g) => Math.max(1, Math.ceil(g / (ING[term]?.pack || 500) - 0.1));
-
-// What a set of meals costs. Ingredients are added up across the meals and bought in whole packs (two
-// chicken dishes of 600 g = 3 packs of 500 g); one without an amount costs a pack per meal. Weekly staples
-// count once; what's at home (pantry, or covered by a staple) costs nothing.
-function planCost(meals, staples = []) {
-  const need = {};
-  for (const m of meals) for (const i of m.items) {
-    if (i.staple || i.have) continue;
-    const x = need[i.term] ||= { term: i.term, g: 0, extra: 0, q: 0, u: i.amt?.[1], offer: i.offer, normal: i.normal };
-    if (i.per) x.g += i.per * (m.portions || 1); else x.extra += 1;
-    // Also in the recipe's own unit ("6 stk"), as long as every meal uses the same one.
-    if (i.amt && x.u === i.amt[1]) x.q += i.amt[0] * (m.portions || 1); else x.u = null;
-  }
-  const buy = [...staples.map(st => ({ ...st, g: 0, packs: 1 })), ...Object.values(need).map(x => ({ ...x, packs: (x.g ? packsFor(x.term, x.g) : 0) + x.extra }))];
-  return {
-    buy,
-    total: buy.reduce((s, x) => s + x.packs * (x.offer?.price ?? x.normal), 0),
-    normal: buy.reduce((s, x) => s + x.packs * x.normal, 0),
-  };
-}
-
-// Dinner plan built from this week's offers: for each store (and each pair of stores) pick the meals that
-// save the most there and price the whole shop, normal-price items and the weekly staples included. The
-// cheapest option wins; a second store must save at least 25 kr. to be worth the trip. Besides the offers,
-// a meal scores for being a favourite (20 kr.), for using what's in the fridge, for protein above 25 g a
-// portion (1 kr. per g) and for how it was rated after cooking.
-function planWeek(pool, offersByTerm, stores, count, { staples = [], rejected = [], pantry = [], portions = 3, protein = true } = {}) {
-  const terms = [...new Set([...staples, ...pool.flatMap(m => m.ingredients)])];
-  const best = {}, normal = {};
-  for (const t of terms) {
-    best[t] = {};
-    normal[t] = normalPrice(t, offersByTerm[t]);
-    for (const o of offersByTerm[t] || [])
-      if (stores.includes(o.store) && !best[t][o.store] && offerFits(t, o.heading) && !rejected.includes((o.heading || "").toLowerCase())
-        && !(Date.parse(o.from) > Date.now())) best[t][o.store] = o; // next week's offers count once they start
-  }
-  // An ingredient a weekly staple already covers ("yoghurt" ← "græsk yoghurt") isn't bought again.
-  const byStaple = (t) => !staples.includes(t) && staples.some(st => offerFits(t, st));
-  const haveOf = (t) => pantry.find(p => covers(p.term, t));
-  const offerIn = (t, set) => set.map(st => best[t][st]).filter(Boolean).sort((x, y) => x.price - y.price)[0] || null;
-  const evaluate = (set) => {
-    const rated = pool.map(m => {
-      const items = m.ingredients.map(t => {
-        const per = perPortion(m, t), have = haveOf(t), a = mealAmounts(m)[t];
-        const amt = a ? [a[0] / mealServings(m), a[1]] : null; // amount per portion in the recipe's own unit
-        if (byStaple(t)) return { term: t, per, amt, offer: null, normal: 0, staple: true };
-        if (have) return { term: t, per, amt, offer: null, normal: normal[t], have: true, fresh: !have.always };
-        return { term: t, per, amt, offer: offerIn(t, set), normal: normal[t] };
-      });
-      const packs = (i) => i.per ? packsFor(i.term, i.per * portions) : 1;
-      const saving = items.reduce((s, i) => s + (i.offer ? packs(i) * Math.max(0, i.normal - i.offer.price) : 0) + (i.fresh ? i.normal + 10 : 0), 0);
-      const macros = mealMacros(m), prot = macros?.p ?? null;
-      const taste = Math.max(-40, Math.min(30, 8 * (m.up || 0) - 15 * (m.down || 0)));
-      return { mealId: m.id, name: m.name, url: m.url || null, fav: !!m.fav, protein: prot, macros, portions, items,
-        value: saving + (m.fav ? 20 : 0) + taste + (protein && prot ? Math.max(0, prot - 25) : 0) };
-    }).sort((x, y) => y.value - x.value);
-    // Variety: no two meals built on the same main ingredient (the first one listed, e.g. "laks").
-    const meals = [], used = new Set();
-    for (const r of rated) if (meals.length < count && !used.has(r.items[0]?.term)) { meals.push(r); used.add(r.items[0]?.term); }
-    for (const r of rated) if (meals.length < count && !meals.includes(r)) meals.push(r);
-    const fixed = staples.map(t => ({ term: t, offer: offerIn(t, set), normal: normal[t] }));
-    return { stores: set, meals, staples: fixed, alts: rated.filter(r => !meals.includes(r)), ...planCost(meals, fixed) };
-  };
-  const pairs = stores.flatMap((x, i) => stores.slice(i + 1).map(y => [x, y]));
-  const options = [...stores.map(x => [x]), ...pairs].map(evaluate)
-    .sort((x, y) => (x.total + (x.stores.length > 1 ? 25 : 0)) - (y.total + (y.stores.length > 1 ? 25 : 0)));
-  return { ...options[0], compare: options.slice(0, 4).map(o => ({ stores: o.stores, total: o.total })) };
-}
 
 // ---------------- Saxo ledger: deposits, trades, dividends and costs ----------------
 // Saxo's report endpoints allow calls from the app's origin, so these go straight from the browser with the
@@ -1293,15 +312,18 @@ async function callBridge(path, body = {}) {
   const b = store.json(BRIDGE_KEY);
   if (!b?.url || !b?.secret) throw new NoBridgeError("Forbindelsen til din worker er ikke sat op (Mere → Bankforbindelser).");
   let res;
+  // Give up after 25 seconds, so a bad connection never leaves a button spinning forever.
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 25000);
   try {
     res = await fetch(b.url.replace(/\/+$/, "") + path, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-App-Secret": b.secret },
       body: JSON.stringify(body),
+      signal: ctl.signal,
     });
-  } catch {
-    throw new Error("Kunne ikke nå din worker. Tjek adressen og din internetforbindelse.");
-  }
+  } catch (e) {
+    throw new Error(e.name === "AbortError" ? "Din worker svarede ikke i tide. Prøv igen om lidt." : "Kunne ikke nå din worker. Tjek adressen og din internetforbindelse.");
+  } finally { clearTimeout(timer); }
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok) { const e = new Error(data?.error || `Worker svarede ${res.status}`); e.status = res.status; e.code = data?.code; throw e; }
@@ -1309,11 +331,12 @@ async function callBridge(path, body = {}) {
 }
 
 const redirectUrl = () => location.origin + location.pathname;
+const CAL_KEY = "cal_cache";         // the user's calendar events (this device only)
+
 // ---------------- Face ID lock (WebAuthn passkey on this device) ----------------
 // A privacy curtain: the app asks for Face ID/Touch ID before showing anything. The passkey never leaves the
 // device; the data itself isn't encrypted by it (that's what the phone's own lock is for).
 const LOCK_KEY = "app_lock";        // {credId, on, after (minutes in background before locking)}
-const randomBytes = (n) => crypto.getRandomValues(new Uint8Array(n));
 async function createLockCredential() {
   const cred = await navigator.credentials.create({ publicKey: {
     challenge: randomBytes(32), rp: { name: "Økonomi" },
@@ -1336,29 +359,6 @@ const scrollToTop = () => document.getElementById("root")?.scrollTo(0, 0);
 // worker only keeps the opaque blob in KV. Newest save wins; the other copy is kept as a local backup.
 const SYNC_META_KEY = "sync_meta";   // {at: time of the copy this device last sent/received}
 const SYNC_BACKUP_KEY = "budget_data_sync_backup";
-const te = new TextEncoder(), td = new TextDecoder();
-async function syncCryptoKey(secret) {
-  const base = await crypto.subtle.importKey("raw", te.encode(secret), "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: te.encode("budget-app-sync-v1"), iterations: 150000, hash: "SHA-256" },
-    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-}
-const toB64 = (buf) => { const u = new Uint8Array(buf); let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
-const fromB64 = (b) => Uint8Array.from(atob(b), c => c.charCodeAt(0));
-const gz = async (bytes, mode) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(mode === "z" ? new CompressionStream("gzip") : new DecompressionStream("gzip"))).arrayBuffer());
-async function sealData(obj, secret) {
-  let bytes = te.encode(JSON.stringify(obj)), z = false;
-  if (typeof CompressionStream !== "undefined") { bytes = await gz(bytes, "z"); z = true; }
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await syncCryptoKey(secret), bytes);
-  return { data: (z ? "z:" : "") + toB64(ct), iv: toB64(iv) };
-}
-async function openData(blob, secret) {
-  const z = blob.data.startsWith("z:");
-  const pt = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(blob.iv) }, await syncCryptoKey(secret), fromB64(z ? blob.data.slice(2) : blob.data)));
-  return JSON.parse(td.decode(z ? await gz(pt, "u") : pt));
-}
-const deviceName = () => /iPhone/.test(navigator.userAgent) ? "iPhone" : /iPad/.test(navigator.userAgent) ? "iPad" : /Android/.test(navigator.userAgent) ? "Android" : /Mac/.test(navigator.userAgent) ? "Mac" : /Windows/.test(navigator.userAgent) ? "Windows-pc" : "computer";
-
 function beginOAuth(provider) {
   const nonce = uid().replace(/-/g, "");
   store.setJson(OAUTH_KEY, { provider, nonce, at: Date.now() });
@@ -1385,6 +385,8 @@ const MORE_PAGES = [
   { id: "su", label: "SU-fribeløb", icon: "school", sub: "Hvor meget du må tjene ved siden af" },
   { id: "shared", label: "Delte udgifter", icon: "arrows", sub: "Hvem skylder hvem" },
   { id: "notify", label: "Notifikationer", icon: "bulb", sub: "Løn, madplan og nye tilbud" },
+  { id: "calendar", label: "Kalender", icon: "ticket", sub: "Google Calendar og madplanen" },
+  { id: "training", label: "Træning", icon: "heart", sub: "Program, vægt og løft" },
   { id: "connections", label: "Bankforbindelser", icon: "bank", sub: "Sparekassen Kronjylland og Saxo" },
   { id: "ai", label: "AI-analyse", icon: "spark", sub: "Råd baseret på dine tal" },
   { id: "import", label: "Import og værktøjer", icon: "upload", sub: "CSV, fast husleje, kategorier" },
@@ -1394,6 +396,9 @@ const MORE_PAGES = [
 ];
 
 const RANGES = { "1M": 31, "3M": 92, "1Å": 366 };
+// SU-fribeløb per month (su.dk, videregående uddannelse, før skat men efter AM-bidrag): with SU, enrolled
+// without SU, and not studying. The year's fribeløb is the sum over the months.
+const SU_FRIBELOB = { 2026: { su: 20749, noSu: 23598, out: 45420 } };
 // Aktiesparekonto: deposit cap per year (skat.dk) and the flat tax on each year's gain (lagerbeskatning).
 const ASK_CAP = { 2025: 166200, 2026: 174200 };
 const ASK_TAX = 0.17;
@@ -1434,6 +439,10 @@ function App() {
   const [quick, setQuick] = useState(null);           // quick expense sheet: {amt, cat, note, kind}
   const [shareDraft, setShareDraft] = useState({ who: "", desc: "", amt: "", paidBy: "me", split: "half" });
   const [shareFor, setShareFor] = useState(null);     // transaction id being shared from Poster
+  const [calCache, setCalCache] = useState(() => store.json(CAL_KEY));
+  const [calDraft, setCalDraft] = useState("");
+  const [weightDraft, setWeightDraft] = useState("");
+  const [liftDraft, setLiftDraft] = useState({ ex: "", kg: "", reps: "" });
   const [renameSub, setRenameSub] = useState(null);
   const [shop, setShop] = useState(init.shop || DEFAULT_SHOP);
   const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
@@ -2269,8 +1278,12 @@ function App() {
         <div style=${{marginTop:6, fontSize:15}}>${left >= 0 ? html`Du har <b className="pos">${fmt(left)}</b> tilbage at bruge` : html`Du er <b className="neg">${fmt(-left)}</b> over budget`} – løn om ${pay.days === 0 ? "i dag" : pay.days === 1 ? "1 dag" : `${pay.days} dage`}.</div>
       </div>
       ${syncChoice && html`<div className="tip tap" style=${{marginBottom:12}} onClick=${()=>go("home")}><div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="refresh" /></div><div>Der er data fra en anden enhed. Tryk for at vælge, hvilke der skal bruges.</div></div>`}
-      ${todayMeal && html`<button className="tip tap" style=${{width:"100%", textAlign:"left", font:"inherit", color:"inherit", marginBottom:12}} onClick=${()=>{ go("food"); setFoodTab("plan"); }}>
-        <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="food" /></div><div>I dag: <b>${todayMeal.name}</b></div></button>`}
+      ${(() => { const away = awayFor(isoDate(new Date()));
+        return (todayMeal || away.away) && html`<button className="tip tap" style=${{width:"100%", textAlign:"left", font:"inherit", color:"inherit", marginBottom:12}} onClick=${()=>{ go("food"); setFoodTab("plan"); }}>
+        <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="food" /></div><div>${away.away ? html`I dag laver du ikke mad${away.reason && away.reason !== "markeret" ? ` (${away.reason})` : ""}.` : html`I dag: <b>${todayMeal.name}</b>`}</div></button>`; })()}
+      ${(() => { const t = isoDate(new Date()), tm = addDays(t, 1), evs = (calCache?.events || []).filter(e => e.end > t && e.start < addDays(t, 2)).slice(0, 3);
+        return evs.length > 0 && html`<div className="card" style=${{marginBottom:12, padding:"10px 14px"}}>${evs.map((e, i) => html`<div key=${i} className="small" style=${{display:"flex", gap:10, padding:"3px 0"}}>
+          <span className="muted" style=${{width:78, flexShrink:0}}>${e.start.slice(0, 10) <= t ? "I dag" : "I morgen"}${e.allDay ? "" : " " + e.start.slice(11, 16)}</span><span style=${{minWidth:0}}>${e.title}</span></div>`)}</div>`; })()}
       <div className="start-grid">
         ${tile("wallet", "#378ADD", "Overblik", `Formue ${fmt(netWorth)}`, () => go("home"))}
         ${tile("donut", "#639922", "Budget", `${fmt(st.exp)} brugt af ${fmt(totalBudget)}`, () => go("budget"))}
@@ -2281,7 +1294,8 @@ function App() {
         ${tile("repeat", "#534AB7", "Abonnementer", `${fmt(subsMonthly)} om måneden`, () => go("more", "subs"))}
         ${tile("arrows", "#D4537E", "Delte udgifter", owed.length ? owed.map(([w, v]) => `${w} ${v > 0 ? "skylder" : "får"} ${fmt(Math.abs(v))}`).join(" · ") : "Ingen åbne udlæg", () => go("more", "shared"))}
         ${tile("donut", "#185FA5", "Månedsrapport", monthName(prevMonth(ym)), () => { setReportMonth(null); go("more", "report"); })}
-        ${tile("school", "#3B8A6E", "SU-fribeløb", prefs.su?.limit ? "Se hvor tæt du er" : "Indtast dit fribeløb", () => go("more", "su"))}
+        ${tile("school", "#3B8A6E", "SU-fribeløb", "Hvor meget du må tjene", () => go("more", "su"))}
+        ${tile("heart", "#1D9E75", "Træning", (() => { const s = sessionFor(training, isoDate(new Date())), w = weekProgress(training); return `${training.log?.[isoDate(new Date())] ? "✓ " : ""}${s ? `I dag: ${s}` : "Hviledag"} · ${w.done}/${w.target}`; })(), () => go("more", "training"))}
         ${tile("dots", "#888780", "Mere", "Bank, data, udseende og lås", () => go("more"), true)}
       </div>
     </div>`;
@@ -2939,7 +1953,16 @@ function App() {
   // AM-bidrag), which is the payout divided by (1 − trækprocent). Rest of the year = the recent average.
   const SuPage = () => {
     const su = prefs.su || {}, setSu = (patch) => setPrefs(pr => ({ ...pr, su: { ...(pr.su || {}), ...patch } }));
-    const year = new Date().getFullYear(), limit = +su.limit || 0, rate = Math.min(60, Math.max(0, +su.rate || 38)) / 100;
+    const year = new Date().getFullYear(), rate = Math.min(60, Math.max(0, +su.rate || 38)) / 100;
+    const sats = SU_FRIBELOB[year] || SU_FRIBELOB[Math.max(...Object.keys(SU_FRIBELOB).map(Number))];
+    // SU is paid on the last bank day for the next month, so a payment on 30/12 is January's SU.
+    const suMonths = new Set(transactions.filter(t => t.category === "SU" && t.amount > 0).map(t => budgetMonth(t.date, t.amount, t.category)).filter(m => m.startsWith(String(year))));
+    const curM = currentBudgetMonth(), stillSu = suMonths.has(curM) || suMonths.has(prevMonth(curM));
+    const restMonths = [...Array(12).keys()].map(i => `${year}-${String(i + 1).padStart(2, "0")}`).filter(m => m > curM && !suMonths.has(m));
+    // No SU payments on the account (yet): assume SU all year rather than none.
+    const withSu = suMonths.size ? suMonths.size + (stillSu ? restMonths.length : 0) : 12, without = 12 - withSu;
+    const autoLimit = withSu * sats.su + without * sats.noSu;
+    const limit = +su.limit || autoLimit;
     const byMonth = {};
     for (const t of transactions) if (t.category === "Løn" && t.amount > 0 && (t.date || "").startsWith(String(year))) byMonth[t.date.slice(0, 7)] = (byMonth[t.date.slice(0, 7)] || 0) + t.amount;
     const months = Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([m, net]) => ({ m, net, pi: net / (1 - rate) }));
@@ -2949,21 +1972,23 @@ function App() {
     const forecast = sofar + avg * Math.max(0, monthsLeft);
     return html`<div>
       <div className="card stack">
-        <div className="small muted">Tjener du mere end dit fribeløb ved siden af SU, skal du betale SU tilbage. Fribeløbet afhænger af, hvor mange måneder du får SU – find dit beløb for ${year} på minSU (su.dk).</div>
-        <label className="field">Dit fribeløb for ${year} (kr.)<input className="input privacy" type="number" inputMode="decimal" value=${su.limit ?? ""} placeholder="fx 180000" onChange=${e=>setSu({ limit: e.target.value })} /></label>
-        <label className="field">Trækprocent på lønnen (%)<input className="input" type="number" inputMode="decimal" value=${su.rate ?? ""} placeholder="38" onChange=${e=>setSu({ rate: e.target.value })} /></label>
-        <div className="small faint">Står på din lønseddel eller forskudsopgørelse (bikort). Bruges til at regne udbetalingen om til løn før skat.</div>
+        <div className="small muted">Så meget må du tjene ved siden af SU i ${year} – regnet ud fra su.dk's satser og de måneder, du får SU.</div>
+        <div style=${{fontSize:26, fontWeight:700}}>${fmt(limit)}</div>
+        <div className="small muted">${withSu} ${withSu === 1 ? "måned" : "måneder"} med SU × ${fmt(sats.su)}${without ? ` + ${without} uden SU × ${fmt(sats.noSu)}` : ""}${su.limit ? " (du har selv rettet beløbet)" : ""}${!suMonths.size ? " – fandt ingen SU-udbetalinger, så der regnes med SU hele året" : ""}</div>
+        <div className="bar" style=${{height:8}}><div style=${{width:`${Math.min(100, forecast / limit * 100)}%`, background: forecast > limit ? "var(--neg)" : forecast > limit * 0.85 ? "var(--warn, #EF9F27)" : "var(--pos)"}}></div></div>
+        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Tjent indtil nu</span><b className="num">${fmt(sofar)}</b></div>
+        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Forventet for hele året</span><b className="num">${fmt(forecast)}</b></div>
+        <div className=${forecast > limit ? "neg" : ""} style=${{fontSize:15}}>${forecast > limit
+          ? html`Du ser ud til at tjene <b>${fmt(forecast - limit)}</b> for meget i ${year}. Du kan fravælge SU for nogle måneder (så stiger fribeløbet) eller betale overskydende SU tilbage.`
+          : html`Du kan tjene ca. <b className="pos">${fmt(limit - forecast)}</b> mere i ${year}, før du skal betale SU tilbage.`}</div>
+        ${avg > 0 && html`<div className="small muted">Resten af året er regnet med dit snit for de seneste ${recent.length} måneder: ca. ${fmt(avg)} pr. måned.</div>`}
       </div>
       <div className="card stack" style=${{marginTop:12}}>
-        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Indtil nu i ${year}</span><b className="num">${fmt(sofar)}</b></div>
-        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Forventet for hele året</span><b className="num">${fmt(forecast)}</b></div>
-        ${limit > 0 ? html`
-          <div className="bar" style=${{height:8}}><div style=${{width:`${Math.min(100, forecast / limit * 100)}%`, background: forecast > limit ? "var(--neg)" : forecast > limit * 0.85 ? "var(--warn, #EF9F27)" : "var(--pos)"}}></div></div>
-          <div className=${forecast > limit ? "neg" : ""} style=${{fontSize:15}}>${forecast > limit
-            ? html`Du ser ud til at tjene <b>${fmt(forecast - limit)}</b> for meget i ${year}. Du kan sætte SU på pause for nogle måneder eller betale overskydende SU tilbage.`
-            : html`Du kan tjene ca. <b className="pos">${fmt(limit - forecast)}</b> mere i ${year}, før du rammer fribeløbet.`}</div>`
-          : html`<div className="small">Indtast dit fribeløb ovenfor, så viser appen, hvor tæt du er på.</div>`}
-        ${avg > 0 && html`<div className="small muted">Resten af året er regnet med dit snit for de seneste ${recent.length} måneder: ca. ${fmt(avg)} pr. måned (ca. ${fmt(avg / 0.92)} før skat).</div>`}
+        <label className="field">Trækprocent på lønnen (%)<input className="input" type="number" inputMode="decimal" value=${su.rate ?? ""} placeholder="38" onChange=${e=>setSu({ rate: e.target.value })} /></label>
+        <div className="small faint">Står på din lønseddel eller forskudsopgørelse. Bruges til at regne udbetalingen om til løn før skat (efter AM-bidrag), som er det, SU tæller.</div>
+        <details className="small"><summary>Ret fribeløbet selv</summary>
+          <label className="field" style=${{marginTop:8}}>Fribeløb for ${year} (tom = beregn selv)<input className="input privacy" type="number" inputMode="decimal" value=${su.limit ?? ""} placeholder=${String(autoLimit)} onChange=${e=>setSu({ limit: e.target.value })} /></label>
+        </details>
       </div>
       ${months.length > 0 && html`<div className="section">
         <div className="section-head"><h2>Løn i ${year}</h2><span className="small faint">udbetalt → tæller for SU</span></div>
@@ -2972,7 +1997,7 @@ function App() {
           <div className="end"><span className="small muted num">${fmt(x.net)} → </span><b className="num">${fmt(x.pi)}</b></div>
         </div>`)}</div>
       </div>`}
-      <div className="small faint" style=${{marginTop:12}}>Hentet fra dine lønindbetalinger (kategorien Løn), også feriepenge. Kun et skøn – SU's opgørelse bygger på din årsopgørelse.</div>
+      <div className="small faint" style=${{marginTop:12}}>Satser fra su.dk (${year}): ${fmt(sats.su)} pr. måned med SU, ${fmt(sats.noSu)} uden SU, ${fmt(sats.out)} når du ikke er under uddannelse. SU'en selv tæller ikke med. Kun et skøn – SU's opgørelse bygger på din årsopgørelse.</div>
     </div>`;
   };
 
@@ -3083,27 +2108,147 @@ function App() {
     </form>
   </div>`;
 
+  // ---------- Træning ----------
+  const training = { ...DEFAULT_TRAINING, ...(prefs.training || {}) };
+  const setTraining = (patch) => setPrefs(pr => ({ ...pr, training: { ...DEFAULT_TRAINING, ...(pr.training || {}), ...(typeof patch === "function" ? patch({ ...DEFAULT_TRAINING, ...(pr.training || {}) }) : patch) } }));
+  const TrainingPage = () => {
+    const today = isoDate(new Date()), session = sessionFor(training, today), done = !!training.log?.[today];
+    const wk = weekProgress(training), streak = weekStreak(training);
+    const ws = (training.weights || []).slice().sort((a, b) => a.d.localeCompare(b.d)), lastW = ws[ws.length - 1];
+    const avg7 = (() => { const r = ws.filter(w => w.d > addDays(today, -7)); return r.length ? r.reduce((s, w) => s + w.kg, 0) / r.length : null; })();
+    const w30 = ws.filter(w => w.d <= addDays(today, -28)).pop();
+    const chart = ws.filter(w => w.d >= addDays(today, -120));
+    const lifts = liftSummary(training.lifts);
+    const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
+    const addWeight = () => { const kg = parseFloat(weightDraft.replace(",", ".")); if (!(kg > 30 && kg < 300)) return; setTraining(t => ({ weights: [...(t.weights || []).filter(w => w.d !== today), { d: today, kg }] })); setWeightDraft(""); };
+    const addLift = () => { const kg = parseFloat(String(liftDraft.kg).replace(",", ".")), reps = parseInt(liftDraft.reps), ex = liftDraft.ex.trim();
+      if (!ex || !(kg > 0) || !(reps > 0)) return; setTraining(t => ({ lifts: [...(t.lifts || []), { d: today, ex, kg, reps }] })); setLiftDraft({ ex, kg: "", reps: "" }); };
+    const importCsv = async (file) => {
+      const rows = parseWorkoutCsv(await file.text());
+      if (!rows.length) { flash("training", "Fejl: fandt ingen sæt i filen (den skal have kolonner for dato, øvelse, vægt og reps)."); return; }
+      setTraining(t => { const key = (x) => `${x.d}|${x.ex}|${x.kg}|${x.reps}`, have = new Set((t.lifts || []).map(key));
+        const add = rows.filter(r => !have.has(key(r))), log = { ...(t.log || {}) }; for (const r of add) log[r.d] ||= true;
+        return { lifts: [...(t.lifts || []), ...add], log }; });
+      flash("training", `${rows.length} sæt læst fra filen.`);
+    };
+    // Simple weight chart (last four months).
+    const W = 300, H = 90, vals = chart.map(w => w.kg), mn = Math.min(...vals) - 0.5, mx = Math.max(...vals) + 0.5;
+    const pts = chart.map((w, i) => [chart.length > 1 ? i / (chart.length - 1) * W : W / 2, H - 8 - (w.kg - mn) / (mx - mn || 1) * (H - 16)]);
+    return html`<div>
+      <div className="card stack">
+        <div style=${{display:"flex", alignItems:"center", gap:12}}>
+          <div style=${{flex:1}}><div className="small muted">I dag</div><div style=${{fontSize:24, fontWeight:700}}>${session || "Hviledag"}</div></div>
+          <a className="btn soft" href="https://gravitus.com/" target="_blank" rel="noopener">Åbn Gravitus</a>
+        </div>
+        ${session || done ? html`<button className=${"btn block " + (done ? "soft" : "primary")} onClick=${()=>setTraining(t => { const log = { ...(t.log || {}) }; if (log[today]) delete log[today]; else log[today] = session || "Ekstra"; return { log }; })}>${done ? "✓ Trænet i dag (fortryd)" : "Markér som trænet"}</button>`
+          : html`<button className="btn block soft" onClick=${()=>setTraining(t => ({ log: { ...(t.log || {}), [today]: "Ekstra" } }))}>Jeg trænede alligevel</button>`}
+        <div style=${{display:"flex", alignItems:"center", gap:10}}>
+          <div style=${{display:"flex", gap:6}}>${[...Array(wk.target).keys()].map(i => html`<span key=${i} className=${"wk-dot" + (i < wk.done ? " on" : "")}></span>`)}</div>
+          <span className="small">${wk.done} af ${wk.target} denne uge</span>
+          ${streak > 0 && html`<span className="small" style=${{marginLeft:"auto"}}>🔥 ${streak} ${streak === 1 ? "uge" : "uger"} i træk</span>`}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Program</h2><span className="small faint">${training.days.length} gange om ugen</span></div>
+        <div className="card stack">
+          <div className="day-chips">${DAY_ORDER.map(d => { const on = training.days.includes(d), name = on ? sessionFor(training, addDays(today, ((d - new Date().getDay()) + 7) % 7)) : null;
+            return html`<button key=${d} className=${"day-chip " + (on ? "" : "away")} aria-pressed=${on} onClick=${()=>setTraining(t => ({ days: on ? t.days.filter(x => x !== d) : [...t.days, d] }))}>
+              <b>${WEEKDAYS[d].slice(0, 3)}</b><i>${on ? name : "hvile"}</i></button>`; })}</div>
+          <label className="field">Pas i rækkefølge (adskilt af komma)<input className="input" value=${training.split.join(", ")} onChange=${e=>setTraining({ split: e.target.value.split(",").map(x => x.trim()).filter(Boolean) })} /></label>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Vægt</h2>${lastW && html`<span className="small faint">senest ${shortDate(lastW.d)}</span>`}</div>
+        <div className="card stack">
+          <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); addWeight(); }}>
+            <input className="input" style=${{flex:1}} inputMode="decimal" value=${weightDraft} onChange=${e=>setWeightDraft(e.target.value)} placeholder=${lastW ? `fx ${String(lastW.kg).replace(".", ",")}` : "Din vægt i kg"} aria-label="Vægt i kg" />
+            <button className="btn primary" type="submit" disabled=${!weightDraft.trim()}>Gem i dag</button>
+          </form>
+          ${chart.length > 1 && html`<svg viewBox=${`0 0 ${W} ${H}`} className="weight-chart" preserveAspectRatio="none" aria-hidden="true">
+            <path d=${pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ")} />
+            ${pts.length && html`<circle cx=${pts[pts.length - 1][0]} cy=${pts[pts.length - 1][1]} r="3.5" />`}
+          </svg>`}
+          ${lastW && html`<div className="stats" style=${{marginTop:0}}>
+            <div className="stat"><div className="label">Nu</div><div className="value">${String(lastW.kg).replace(".", ",")} kg</div></div>
+            <div className="stat"><div className="label">Snit 7 dage</div><div className="value">${avg7 ? avg7.toFixed(1).replace(".", ",") : "–"} kg</div></div>
+            <div className="stat"><div className="label">4 uger</div><div className="value">${w30 ? `${lastW.kg - w30.kg >= 0 ? "+" : ""}${(lastW.kg - w30.kg).toFixed(1).replace(".", ",")}` : "–"} kg</div></div>
+          </div>`}
+          ${lastW && html`<div className="small">Til muskelopbygning anbefales ca. 1,6–2,2 g protein pr. kg – for dig ca. <b>${Math.round(lastW.kg * 1.8)} g</b> om dagen.
+            ${+prefs.proteinGoal !== Math.round(lastW.kg * 1.8) && html` <button className="link-btn small" onClick=${()=>setPrefs(pr => ({ ...pr, proteinGoal: String(Math.round(lastW.kg * 1.8)) }))}>Brug som proteinmål i madplanen</button>`}</div>`}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head"><h2>Løft</h2><label className="link-btn small" style=${{cursor:"pointer"}}>Importér fra Gravitus (CSV)<input type="file" accept=".csv,text/csv" style=${{display:"none"}} onChange=${e=>{ e.target.files[0] && importCsv(e.target.files[0]); e.target.value = ""; }} /></label></div>
+        <form className="card stack" onSubmit=${e=>{ e.preventDefault(); addLift(); }}>
+          <input className="input" list="lift-names" value=${liftDraft.ex} onChange=${e=>setLiftDraft({...liftDraft, ex: e.target.value})} placeholder="Øvelse, fx Bænkpres" aria-label="Øvelse" />
+          <datalist id="lift-names">${[...new Set([...LIFTS, ...lifts.map(l => l.ex)])].map(x => html`<option key=${x} value=${x} />`)}</datalist>
+          <div style=${{display:"flex", gap:8}}>
+            <input className="input" style=${{flex:1}} inputMode="decimal" value=${liftDraft.kg} onChange=${e=>setLiftDraft({...liftDraft, kg: e.target.value})} placeholder="kg" aria-label="Kilo" />
+            <input className="input" style=${{flex:1}} inputMode="numeric" value=${liftDraft.reps} onChange=${e=>setLiftDraft({...liftDraft, reps: e.target.value})} placeholder="reps" aria-label="Gentagelser" />
+            <button className="btn primary" type="submit">Gem sæt</button>
+          </div>
+          <${Msg} k="training" />
+        </form>
+        ${lifts.length > 0 && html`<div className="list" style=${{marginTop:10}}>${lifts.map(l => html`<div key=${l.ex} className="row" style=${{minHeight:52}}>
+          <div className="main"><div className="title">${l.ex}</div><div className="sub">${String(l.last.kg).replace(".", ",")} kg × ${l.last.reps} · ${shortDate(l.last.d)}</div></div>
+          <div className="end"><div className="num" style=${{fontWeight:650}}>${String(l.best).replace(".", ",")} kg</div><div className=${"small " + (l.change > 0 ? "pos" : l.change < 0 ? "neg" : "muted")}>${l.change != null ? `${l.change > 0 ? "+" : ""}${String(l.change).replace(".", ",")} kg på 4 uger` : "anslået maks"}</div></div>
+        </div>`)}</div>`}
+        <div className="small faint" style=${{marginTop:8}}>Maks er anslået ud fra dit bedste sæt (Epley). Gravitus har ingen åben forbindelse, men kan du eksportere dine træninger som CSV, kan de importeres her.</div>
+      </div>
+    </div>`;
+  };
+
+  // ---------- Kalender ----------
+  const calFeedUrl = () => { const b = store.json(BRIDGE_KEY); return b?.url && prefs.calToken ? `${b.url.replace(/\/+$/, "")}/cal/${prefs.calToken}.ics` : null; };
+  const CalendarPage = () => {
+    const evs = calCache?.events || [], upcoming = evs.filter(e => e.end >= isoDate(new Date())).slice(0, 8);
+    const feed = calFeedUrl();
+    const fmtEv = (e) => { const d = parseDKDate(e.start.slice(0, 10)); return `${WEEKDAYS[d.getDay()].slice(0, 3)} ${d.getDate()}/${d.getMonth() + 1}${e.allDay ? "" : " " + e.start.slice(11, 16)}`; };
+    return html`<div>
+      <div className="card stack">
+        <div style=${{fontWeight:600}}>Læs din Google Calendar</div>
+        <div className="small muted">Så ved madplanen, hvornår du ikke er hjemme til aftensmad, fx middage, fester og ture.</div>
+        ${prefs.calUrl ? html`
+          <div className="small pos">Forbundet${calCache?.fetched ? ` · hentet ${new Date(calCache.fetched).toLocaleTimeString("da-DK", { hour:"2-digit", minute:"2-digit" })}` : ""} · ${evs.length} aftaler de næste 6 uger.</div>
+          <div className="btns"><button className="btn soft" onClick=${()=>refreshCalendar(true)}>Hent nu</button><button className="btn" onClick=${()=>{ setPrefs(pr => ({ ...pr, calUrl: null })); store.remove(CAL_KEY); setCalCache(null); }}>Fjern</button></div>`
+        : html`
+          <ol className="small" style=${{margin:0, paddingLeft:18, display:"flex", flexDirection:"column", gap:4}}>
+            <li>Åbn <b>calendar.google.com</b> på en computer.</li>
+            <li>Tryk på tandhjulet → <b>Indstillinger</b>, og vælg din kalender i venstre side.</li>
+            <li>Rul ned til <b>Integrer kalender</b>, og kopiér <b>Hemmelig adresse i iCal-format</b>.</li>
+            <li>Sæt den ind her.</li>
+          </ol>
+          <form style=${{display:"flex", gap:8}} onSubmit=${e=>{ e.preventDefault(); const u = calDraft.trim(); if (/^(https|webcal):\/\//.test(u)) { setPrefs(pr => ({ ...pr, calUrl: u })); setCalDraft(""); } else flash("cal", "Fejl: adressen skal starte med https://"); }}>
+            <input className="input privacy" style=${{flex:1}} value=${calDraft} onChange=${e=>setCalDraft(e.target.value)} placeholder="https://calendar.google.com/…/basic.ics" aria-label="Hemmelig iCal-adresse" />
+            <button className="btn primary" type="submit" disabled=${!calDraft.trim()}>Gem</button>
+          </form>`}
+        <${Msg} k="cal" />
+        ${upcoming.length > 0 && html`<div className="list">${upcoming.map((e, i) => { const away = !e.allDay || (Date.parse(e.end) - Date.parse(e.start)) >= 2 * 864e5 ? calendarAway([e], e.start.slice(0, 10)) : calendarAway([e], e.start.slice(0, 10));
+          return html`<div key=${i} className="row" style=${{minHeight:44}}><div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${e.title}</div><div className="sub">${fmtEv(e)}${e.location ? ` · ${e.location}` : ""}</div></div>${away && html`<span className="small muted">ude til aftensmad</span>`}</div>`; })}</div>`}
+      </div>
+      <div className="card stack" style=${{marginTop:12}}>
+        <div style=${{fontWeight:600}}>Vis appen i Google Calendar</div>
+        <div className="small muted">En kalender "Økonomi" med madplanens retter, lønningsdage, husleje og dine rejser – uden beløb. Google opdaterer den selv nogle gange i døgnet.</div>
+        ${feed ? html`
+          <div className="code" style=${{wordBreak:"break-all", fontSize:12}}>${feed}</div>
+          <button className="btn soft" onClick=${async ()=>{ try { await navigator.clipboard.writeText(feed); flash("calpub", "Adressen er kopieret."); } catch { flash("calpub", "Markér og kopiér adressen ovenfor."); } }}>Kopiér adressen</button>
+          <ol className="small" style=${{margin:0, paddingLeft:18, display:"flex", flexDirection:"column", gap:4}}>
+            <li>Åbn <b>calendar.google.com</b> på en computer.</li>
+            <li>Ved <b>Andre kalendere</b> i venstre side: tryk <b>+</b> → <b>Fra webadresse</b>.</li>
+            <li>Sæt adressen ind, og tryk <b>Tilføj kalender</b>.</li>
+          </ol>
+          <div className="small faint">Del ikke adressen – alle med den kan se kalenderen.</div>`
+        : html`<button className="btn primary" disabled=${!store.json(BRIDGE_KEY)} onClick=${()=>setPrefs(pr => ({ ...pr, calToken: toB64(randomBytes(24)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") }))}>Lav kalenderen</button>`}
+        <${Msg} k="calpub" />
+      </div>
+    </div>`;
+  };
+
   const detectedStores = usualStores(transactions);
   const shopStores = shop.stores || (detectedStores.length ? detectedStores : ["REMA 1000", "Netto", "Lidl"]);
-  // What to be told about, worked out here (the worker can't read the data) and sent to the worker, which
-  // delivers each one when it's due: payday at 8, the morning after the madplan ends, plus new weekly offers.
-  useEffect(() => {
-    if (store.get(PUSH_KEY) !== "1") return;
-    const items = [];
-    const at = (d, h) => { const x = new Date(d); x.setHours(h, 0, 0, 0); return x.getTime(); };
-    for (const k of [0, 1]) {
-      const n = new Date(); const pd = paydayIn(n.getFullYear(), n.getMonth() + k);
-      if (at(pd, 8) > Date.now()) items.push({ id: `pay-${isoDate(pd)}`, at: at(pd, 8), title: "Løn i dag 💰", body: `Rapporten for ${MONTHS_DA[pd.getMonth()]} er klar i appen, og budgettet starter forfra.` });
-    }
-    if (shop.plan?.created && shop.plan.meals?.length) {
-      const end = parseDKDate(addDays(shop.plan.created, (shop.plan.cookNights ?? shop.plan.nights)));
-      if (at(end, 10) > Date.now()) items.push({ id: `plan-${shop.plan.created}`, at: at(end, 10), title: "Madplanen er slut 🍽", body: "Tryk for at lave en ny madplan ud fra ugens tilbud." });
-    }
-    const watch = { term: (shop.staples || [])[0] || "kylling", stores: shopStores, lat: shop.lat, lng: shop.lng };
-    const sig = JSON.stringify({ items, watch });
-    if (store.get("push_sched") === sig) return;
-    callBridge("/push/schedule", { items, watch }).then(() => store.set("push_sched", sig)).catch(() => {});
-  }, [shop.plan?.created, shop.plan?.nights, shopStores.join(","), pushInfo.on]);
 
   const StoresBlock = () => {
     const toggleStore = (c) => setShop({...shop, stores: shopStores.includes(c) ? shopStores.filter(x => x !== c) : [...shopStores, c]});
@@ -3233,22 +2378,103 @@ function App() {
   }, [page, staples.join(","), shopStores.join(","), shop.lat]);
   const newOffers = !!(shop.plan?.created && shop.offerCheck?.newest && isoDate(new Date(shop.offerCheck.newest)) > shop.plan.created);
   // Where today falls in the plan: day 0 is the day it was made; each meal covers cookDays days.
+  // ---------- calendar ----------
+  const refreshCalendar = async (force) => {
+    const cur = store.json(CAL_KEY);
+    if (!prefs.calUrl) return cur?.events || [];
+    if (!force && cur && Date.now() - Date.parse(cur.fetched) < 3600e3) return cur.events;
+    try { const r = await callBridge("/calendar/events", { url: prefs.calUrl }); store.setJson(CAL_KEY, r); setCalCache(r); return r.events; }
+    catch (e) { if (force) flash("cal", "Fejl: " + e.message, 9000); return cur?.events || []; }
+  };
+  useEffect(() => { refreshCalendar(false); }, [prefs.calUrl]);
+  // Away for dinner on a date: the user's own mark wins, else the calendar.
+  const awayFor = (date, evs = calCache?.events) => {
+    const own = prefs.away?.[date];
+    const ev = calendarAway(evs, date);
+    return own != null ? { away: own, reason: own ? (ev?.title || "markeret") : null, own: true } : { away: !!ev, reason: ev?.title || null, own: false };
+  };
+  // Tap a day: "laver ikke mad" on/off. A mark that matches what the calendar says is removed again.
+  const toggleAway = (date) => setPrefs(pr => {
+    const auto = !!calendarAway(calCache?.events, date), cur = pr.away?.[date] ?? auto, away = { ...(pr.away || {}) };
+    if (!cur === auto) delete away[date]; else away[date] = !cur;
+    for (const d of Object.keys(away)) if (d < isoDate(new Date())) delete away[d];
+    return { ...pr, away };
+  });
+
   const planDay = shop.plan?.created ? Math.round((parseDKDate(isoDate(new Date())) - parseDKDate(shop.plan.created)) / 864e5) : 0;
-  const planLen = shop.plan ? (shop.plan.cookNights ?? shop.plan.nights) : 0;
+  // The days (counted from the day the plan was made) the user eats at home; older plans: consecutive days.
+  // Days already behind us stay as planned; the rest are laid out again from today, skipping evenings out –
+  // so marking "laver ikke mad" (or a new calendar event) pushes the remaining meals a day on.
+  const planDays = (() => {
+    if (!shop.plan) return [];
+    const base = shop.plan.days || [...Array(shop.plan.cookNights ?? shop.plan.nights).keys()];
+    const past = base.filter(d => d < planDay), fut = [];
+    for (let k = Math.max(0, planDay); fut.length < base.length - past.length && k < planDay + 60; k++)
+      if (!awayFor(addDays(shop.plan.created, k)).away) fut.push(k);
+    return [...past, ...fut];
+  })();
+  const planLen = planDays.length ? planDays[planDays.length - 1] + 1 : 0;
+  const mealDays = (i) => planDays.slice(i * (shop.plan?.cookDays || 1), (i + 1) * (shop.plan?.cookDays || 1));
   const mealState = (i) => {
-    const from = i * (shop.plan?.cookDays || 1), to = Math.min(from + (shop.plan?.cookDays || 1), planLen) - 1;
-    return to < planDay ? "past" : from > planDay ? "future" : "now";
+    const d = mealDays(i);
+    if (!d.length) return "future";
+    return d[d.length - 1] < planDay ? "past" : d[0] > planDay ? "future" : "now";
   };
   const planEnded = !!(shop.plan?.buy && shop.plan.meals?.length && planDay >= planLen);
   const foodBadge = newOffers || planEnded;
+  // What to be told about, worked out here (the worker can't read the data) and sent to the worker, which
+  // delivers each one when it's due: payday at 8, the morning after the madplan ends, plus new weekly offers.
+  useEffect(() => {
+    if (store.get(PUSH_KEY) !== "1") return;
+    const items = [];
+    const at = (d, h) => { const x = new Date(d); x.setHours(h, 0, 0, 0); return x.getTime(); };
+    for (const k of [0, 1]) {
+      const n = new Date(); const pd = paydayIn(n.getFullYear(), n.getMonth() + k);
+      if (at(pd, 8) > Date.now()) items.push({ id: `pay-${isoDate(pd)}`, at: at(pd, 8), title: "Løn i dag 💰", body: `Rapporten for ${MONTHS_DA[pd.getMonth()]} er klar i appen, og budgettet starter forfra.` });
+    }
+    if (shop.plan?.created && shop.plan.meals?.length) {
+      const end = parseDKDate(addDays(shop.plan.created, planLen));
+      if (at(end, 10) > Date.now()) items.push({ id: `plan-${shop.plan.created}`, at: at(end, 10), title: "Madplanen er slut 🍽", body: "Tryk for at lave en ny madplan ud fra ugens tilbud." });
+    }
+    const watch = { term: (shop.staples || [])[0] || "kylling", stores: shopStores, lat: shop.lat, lng: shop.lng };
+    const sig = JSON.stringify({ items, watch });
+    if (store.get("push_sched") === sig) return;
+    callBridge("/push/schedule", { items, watch }).then(() => store.set("push_sched", sig)).catch(() => {});
+  }, [shop.plan?.created, planLen, shopStores.join(","), pushInfo.on]);
+
+  // The "Økonomi" calendar for Google: madplan dinners, paydays, rent and trips (titles only, no amounts).
+  // Sent to the worker whenever it changes; Google fetches it from /cal/<token>.ics.
+  useEffect(() => {
+    if (!prefs.calToken || !store.json(BRIDGE_KEY)) return;
+    const items = [], now = new Date();
+    for (let k = 0; k < 3; k++) {
+      const pd = paydayIn(now.getFullYear(), now.getMonth() + k), d = isoDate(pd);
+      items.push({ uid: `pay-${d}`, date: d, title: "💰 Løn og SU" });
+      const end = isoDate(new Date(now.getFullYear(), now.getMonth() + k + 1, 0));
+      if (rent?.amount) items.push({ uid: `rent-${end}`, date: end, title: "🏠 Husleje" });
+    }
+    if (shop.plan?.meals?.length) shop.plan.meals.forEach((m, i) => mealDays(i).forEach((k, j) => {
+      const d = addDays(shop.plan.created, k);
+      items.push({ uid: `meal-${d}`, date: d, time: "18:00", title: `🍽 ${m.name}`, desc: j === 0 ? `Lav til ${mealDays(i).length} ${mealDays(i).length === 1 ? "dag" : "dage"}. Se opskriften i appen.` : "Rester fra tidligere i ugen." });
+    }));
+    for (const t of rejse.trips || []) if (t.from) items.push({ uid: `trip-${t.id}`, date: t.from, endDate: t.to || t.from, title: `✈️ ${t.name}` });
+    for (let k = 0; k < 14; k++) { const d = addDays(isoDate(now), k), s = sessionFor(training, d); if (s) items.push({ uid: `gym-${d}`, date: d, title: `🏋️ ${s}` }); }
+    const ics = buildIcs(items), sig = ics.replace(/DTSTAMP:\S+/g, "");
+    if (store.get("cal_pub_sig") === sig) return;
+    callBridge("/calendar/publish", { token: prefs.calToken, ics }).then(() => store.set("cal_pub_sig", sig)).catch(() => {});
+  }, [prefs.calToken, shop.plan?.created, planDays.join(","), rent?.amount, (rejse.trips || []).length, training.days.join(","), training.split.join(",")]);
   const deals = (shop.offerCheck?.deals || []).filter(d => (!d.till || Date.parse(d.till) >= Date.now()) && !shop.items.some(i => !i.done && i.name.toLowerCase() === d.term));
   useEffect(() => { try { foodBadge ? navigator.setAppBadge?.() : navigator.clearAppBadge?.(); } catch {} }, [foodBadge]);
 
   const makePlan = async () => {
     setPlanBusy(true);
     try {
-      const fromFreezer = shop.useFreezer !== false ? Math.min(freezerTotal, nights * perNight) : 0;
-      const cookNights = Math.max(0, nights - Math.floor(fromFreezer / perNight));
+      // Evenings out (calendar or the user's own marks) are skipped: no dinner to cook then.
+      const evs = await refreshCalendar(false), today = isoDate(new Date());
+      const home = [...Array(nights).keys()].filter(k => !awayFor(addDays(today, k), evs).away);
+      const fromFreezer = shop.useFreezer !== false ? Math.min(freezerTotal, home.length * perNight) : 0;
+      const cookNights = Math.max(0, home.length - Math.floor(fromFreezer / perNight));
+      const days = home.slice(0, cookNights);
       const terms = [...new Set([...staples, ...mealPool.flatMap(m => m.ingredients)])];
       const lists = {};
       for (let i = 0; i < terms.length; i += 6) {
@@ -3264,7 +2490,7 @@ function App() {
       const r = { ...r0, meals: [...carried, ...r0.meals] };
       let left = fromFreezer; const fz = [];
       for (const f of freezer) { if (left <= 0) break; const n = Math.min(left, +f.portions || 0); if (n) fz.push({ id: f.id, name: f.name, portions: n }); left -= n; }
-      setShop(s => ({...s, carry: [], plan: { created: isoDate(new Date()), nights, cookDays, perNight, cookNights, freezer: fz, ...r }}));
+      setShop(s => ({...s, carry: [], plan: { created: today, nights, cookDays, perNight, cookNights, days, freezer: fz, ...r }}));
     } finally { setPlanBusy(false); }
   };
 
@@ -3323,12 +2549,13 @@ function App() {
 
   const PlanTab = () => {
     const plan = shop.plan;
+    // "Lør–Man", or "Fre, Søn–Man" when an evening out splits the days.
     const span = (i) => {
       if (!plan) return "";
-      const start = new Date(plan.created + "T12:00:00"), last = (plan.cookNights ?? plan.nights) - 1;
-      const from = i * plan.cookDays, to = Math.min(from + plan.cookDays - 1, last);
-      const day = (n) => WEEKDAYS[(start.getDay() + n) % 7].slice(0, 3);
-      return from >= to ? day(from) : `${day(from)}–${day(to)}`;
+      const start = new Date(plan.created + "T12:00:00"), day = (n) => WEEKDAYS[(start.getDay() + n) % 7].slice(0, 3);
+      const runs = [];
+      for (const d of mealDays(i)) { const r = runs[runs.length - 1]; if (r && d === r[1] + 1) r[1] = d; else runs.push([d, d]); }
+      return runs.map(([a, b]) => a === b ? day(a) : `${day(a)}–${day(b)}`).join(", ");
     };
     const old = plan && !plan.buy; // a plan made before amounts and packs
     const shopping = {};
@@ -3368,6 +2595,15 @@ function App() {
         ${stepper("Aftener", nights, 1, 14, v => setShop(s => ({...s, days: v})))}
         ${stepper("Dage pr. ret", cookDays, 1, 5, v => setShop(s => ({...s, cookDays: v})))}
         ${stepper("Portioner pr. aften", perNight, 1, 6, v => setShop(s => ({...s, perNight: v})))}
+        <div>
+          <div className="small" style=${{marginBottom:6}}>Laver du mad? <span className="faint">Tryk på en dag, hvor du ikke laver mad</span></div>
+          <div className="day-chips">${[...Array(Math.max(7, nights)).keys()].map(k => { const date = addDays(isoDate(new Date()), k), a = awayFor(date), d = parseDKDate(date);
+            return html`<button key=${date} className=${"day-chip " + (a.away ? "away" : "")} aria-pressed=${!a.away} title=${a.reason || ""} onClick=${()=>toggleAway(date)}>
+              <b>${k === 0 ? "I dag" : k === 1 ? "I morgen" : WEEKDAYS[d.getDay()].slice(0, 3)}</b><span>${d.getDate()}/${d.getMonth() + 1}</span><i>${a.away ? (a.own ? "ude" : "📅 ude") : "🍽"}</i></button>`; })}</div>
+          ${(() => { const out = [...Array(Math.max(7, nights)).keys()].map(k => addDays(isoDate(new Date()), k)).map(d => [d, awayFor(d)]).filter(([, a]) => a.away && a.reason && !a.own);
+            return out.length > 0 && html`<div className="small faint" style=${{marginTop:6}}>Fra kalenderen: ${out.map(([d, a]) => `${WEEKDAYS[parseDKDate(d).getDay()].slice(0, 3).toLowerCase()} (${a.reason})`).join(", ")}.</div>`; })()}
+          ${!prefs.calUrl && html`<div className="small faint" style=${{marginTop:6}}><button className="link-btn small" onClick=${()=>{ setPage("more"); setSub("calendar"); scrollToTop(); }}>Forbind din kalender</button>, så finder appen selv dage, hvor du ikke er hjemme.</div>`}
+        </div>
         <div className="small faint">Hver ret laves til ${cookDays * perNight} ${cookDays * perNight === 1 ? "portion" : "portioner"}.${freezerTotal > 0 && shop.useFreezer !== false ? ` ${freezerTotal} ${freezerTotal === 1 ? "portion" : "portioner"} fra fryseren bruges først.` : ""}</div>
         <label style=${{display:"flex", alignItems:"center", gap:10}} className="small">
           <input type="checkbox" style=${{width:20, height:20, accentColor:"var(--accent)"}} checked=${shop.preferProtein !== false} onChange=${e=>setShop(s => ({...s, preferProtein: e.target.checked}))} />
@@ -4029,7 +3265,7 @@ function App() {
 
   const MorePage = () => {
     if (sub) {
-      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, report: ReportPage, trends: TrendsPage, su: SuPage, shared: SharedPage, notify: NotifyPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
+      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, report: ReportPage, trends: TrendsPage, su: SuPage, shared: SharedPage, notify: NotifyPage, calendar: CalendarPage, training: TrainingPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
       return Sub ? Sub() : null;
     }
     const lastBackup = +store.get(BACKUP_KEY) || 0;
@@ -4062,7 +3298,7 @@ function App() {
     : PAGES.find(p => p.id === page)?.label;
   const lastSync = [sync.bank, sync.saxo].filter(Boolean).sort().pop();
   const canSync = Boolean(ebSession?.session_id) || Boolean(saxoTokens);
-  const body = { start: StartPage, home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, food: FoodPage, more: MorePage }[page]();
+  const body = { start: StartPage, home: HomePage, tx: TxPage, budget: BudgetPage, invest: InvestPage, food: FoodPage, more: MorePage }[page] || StartPage;
 
   if (locked && lock.on) return html`<div className="lock-screen">
     <div className="lock-inner">
@@ -4098,7 +3334,7 @@ function App() {
       ${syncError && html`<div className="banner err"><span className="grow">${syncError}</span><button className="link-btn" onClick=${()=>setSyncError("")}>Luk</button></div>`}
       ${msgs.sync && html`<div className="banner info">${msgs.sync}</div>`}
       ${pendingCode && page !== "more" && html`<div className="banner info"><span className="grow">Login gennemført i en anden browser.</span><button className="btn soft" onClick=${()=>goSub("connections")}>Vis kode</button></div>`}
-      ${body}
+      <${PageBoundary} key=${page + (sub || "")}><${Render} fn=${body} /></${PageBoundary}>
     </main>
     ${toast && html`<div className="toast" role="status">
       <span>${toast.text}</span>
@@ -4115,6 +3351,23 @@ function App() {
 }
 
 // If anything in the UI throws, show a way out instead of a blank page. Stored data is untouched.
+// One page failing shows a message on that page only; the menu and the other pages keep working.
+const Render = ({ fn }) => fn();
+class PageBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error(error, info); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return html`<div className="card stack">
+      <div style=${{fontWeight:600}}>Siden kunne ikke vises</div>
+      <div className="small muted">Dine data er ikke rørt. Prøv igen, eller gå til en anden side.</div>
+      <div className="code small">${String(this.state.error?.message || this.state.error)}</div>
+      <button className="btn soft" onClick=${() => this.setState({ error: null })}>Prøv igen</button>
+    </div>`;
+  }
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }

@@ -1,9 +1,10 @@
 // Bump CACHE when you deploy changes, so installed apps pick up the new files.
-const CACHE = "okonomi-v41";
+const CACHE = "okonomi-v44";
 const CDN = "https://esm.sh";
 const APP_FILES = [
   "./", "index.html", "app.js", "styles.css", "manifest.webmanifest",
   "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png",
+  "lib/dates.js", "lib/util.js", "lib/transactions.js", "lib/calendar.js", "lib/sync.js", "lib/food.js", "lib/training.js",
 ];
 
 self.addEventListener("install", (e) => {
