@@ -360,6 +360,28 @@ const INGREDIENT_GROUPS = [
   ["Frost", ["wokgrøntsager", "ærter", "frossen spinat", "frossen broccoli", "frosne bær", "pommes frites", "frosne grøntsager", "blomkålsris"]],
   ["Krydderier", ["tacokrydderi", "oregano", "timian", "paprika", "røget paprika", "spidskommen", "karry", "garam masala", "gurkemeje", "kanel", "chiliflager", "hvidløgspulver", "laurbærblade", "kardemomme", "koriander", "muskatnød", "salt", "peber"]],
 ];
+// How to cook the starter meals (written for the app, for the amounts in MEAL_AMOUNTS). Salt, pepper and oil
+// are assumed to be at home.
+const MEAL_STEPS = {
+  "Kylling i karry": [30, ["Kog risen efter anvisningen på posen.", "Skær kyllingen i mundrette stykker, og hak løget.", "Brun kyllingen i lidt olie i en gryde ved høj varme i 3–4 minutter. Tag den op.", "Svits løget blødt i gryden i 3–4 minutter. Tilsæt 1–2 spsk karry, og rør rundt i et minut.", "Hæld kokosmælken i, læg kyllingen tilbage, og lad det simre i 10 minutter, til kyllingen er gennemstegt.", "Smag til med salt og peber, og server med risen."]],
+  "Spaghetti bolognese": [40, ["Hak løget fint, og svits det i lidt olie i en gryde i 3–4 minutter.", "Tilsæt oksekødet, og brun det ved høj varme, mens du deler det med en grydeske.", "Tilsæt de hakkede tomater, 1 tsk oregano, salt og peber. Lad saucen simre under halvt låg i 20–25 minutter.", "Kog spaghettien i godt saltet vand efter anvisningen på pakken.", "Smag saucen til, og server den over pastaen."]],
+  "Chili con carne": [40, ["Kog risen efter anvisningen på posen.", "Brun oksekødet i lidt olie i en gryde ved høj varme.", "Tilsæt 1 tsk spidskommen, 1 tsk paprika og ½ tsk chiliflager, og rør rundt i et minut.", "Tilsæt de hakkede tomater og de skyllede kidneybønner. Lad chilien simre i 20 minutter, og rør af og til.", "Smag til med salt og peber, og server med risen – gerne med en klat creme fraiche."]],
+  "Tacos": [25, ["Brun oksekødet i lidt olie på en pande ved høj varme.", "Tilsæt tacokrydderi og ½ dl vand, og lad det simre i 5 minutter.", "Snit salaten, og riv osten, hvis den ikke er revet.", "Varm tortillaerne på en tør pande eller 5 minutter i ovnen ved 180 grader.", "Fyld tortillaerne med kød, salat og ost."]],
+  "Pasta med kylling og pesto": [25, ["Kog pastaen i godt saltet vand.", "Skær kyllingen i strimler, og steg den i lidt olie i 6–8 minutter, til den er gennemstegt. Krydr med salt og peber.", "Hæld pastaen fra, men gem 1 dl af kogevandet.", "Vend pasta, kylling og pesto sammen med lidt af kogevandet, så det bliver cremet."]],
+  "Wok med kylling": [20, ["Kog nudlerne efter anvisningen, og skyl dem kort i koldt vand.", "Skær kyllingen i tynde strimler, og steg den i olie ved høj varme i en wok eller stor pande i 5–6 minutter.", "Tilsæt wokgrøntsagerne, og steg videre i 3–4 minutter under omrøring.", "Vend nudlerne i, og smag til med 2–3 spsk soja."]],
+  "Lasagne": [90, ["Tænd ovnen på 200 grader.", "Brun oksekødet i lidt olie. Tilsæt de hakkede tomater, 1 tsk oregano, salt og peber, og lad saucen simre i 15 minutter.", "Læg lag i et ovnfast fad: kødsauce, lasagneplader, kødsauce osv. Slut med et lag kødsauce. Vil du have den mere cremet, så kom en klat creme fraiche mellem lagene.", "Drys osten over.", "Bag lasagnen i 35–40 minutter, til pladerne er møre og osten er gylden. Lad den hvile 10 minutter, før den skæres."]],
+  "Laks med kartofler": [35, ["Kog kartoflerne i saltet vand i 15–20 minutter, til de er møre.", "Tænd ovnen på 200 grader. Læg laksen i et ovnfast fad, og krydr med salt, peber og evt. lidt citron.", "Bag laksen i 12–15 minutter.", "Del broccolien i buketter, og kog den i 3–4 minutter.", "Server laks, kartofler og broccoli sammen."]],
+  "Frikadeller med kartofler": [45, ["Rør det hakkede svinekød med ægget, 2 spsk hvedemel, 1 tsk salt og lidt peber. Lad farsen hvile i køleskabet i 15 minutter.", "Kog kartoflerne i saltet vand i 15–20 minutter.", "Form frikadeller med en ske dyppet i vand.", "Steg frikadellerne i smør eller olie ved middelvarme i 4–5 minutter på hver side, til de er gennemstegte."]],
+  "Burger": [25, ["Form oksekødet til 4 bøffer, og krydr med salt og peber.", "Steg bøfferne på en varm pande i 3–4 minutter på hver side. Læg ost på det sidste minut, og læg låg på.", "Rist bollerne let på panden.", "Saml burgerne med salat og bøf."]],
+  "Pizza": [30, ["Tænd ovnen på 225 grader eller det højeste, den kan.", "Rul dejen ud på en bageplade med bagepapir.", "Smør tomatsaucen ud, og fordel skinke og ost.", "Bag pizzaen i 12–15 minutter, til bunden er sprød og osten gylden."]],
+  "Omelet med bacon": [15, ["Steg baconen sprød på en pande, og tag den op.", "Pisk æggene med salt, peber og evt. en sjat mælk.", "Hæld æggene på panden ved middelvarme, og rør let, til de begynder at stivne.", "Drys bacon og ost over, og læg låg på i 2–3 minutter, til omeletten er stivnet."]],
+  "Kyllingepasta med hytteostsauce": [30, ["Kog pastaen i godt saltet vand.", "Skær kyllingen i tern, og steg den i lidt olie i 6–8 minutter. Krydr med salt og peber.", "Blend hytteosten med hvidløg og lidt pastavand til en glat sauce. Har du ikke en blender, så rør den sammen ved lav varme.", "Vend spinaten i panden, til den falder sammen. Tilsæt sauce og pasta, og varm det igennem ved lav varme – det må ikke koge.", "Smag til med salt og peber."]],
+  "Bolognese med linser": [40, ["Hak løget fint, og svits det i lidt olie i en gryde i 3–4 minutter.", "Tilsæt oksekødet, og brun det ved høj varme.", "Tilsæt de skyllede røde linser, de hakkede tomater og 2 dl vand. Lad det simre i 20 minutter, til linserne er møre. Kom mere vand i, hvis den bliver for tyk.", "Kog pastaen imens.", "Smag saucen til med salt og peber, og server over pastaen."]],
+  "Tunpasta med cherrytomater": [20, ["Kog pastaen, og lad den dryppe af.", "Halvér cherrytomaterne, hak rødløget fint, og lad tunen dryppe af.", "Rør skyren med salt, peber og evt. lidt citron.", "Vend pasta, tun, tomater, rødløg og skyrsauce sammen. Retten kan spises lun eller kold."]],
+  "Kalkunpasta med pesto og spinat": [25, ["Kog pastaen i godt saltet vand.", "Skær kalkunen i strimler, og steg den i lidt olie i 6–8 minutter.", "Vend spinaten i panden, til den falder sammen.", "Tilsæt pasta, pesto og lidt kogevand, og vend det hele sammen."]],
+  "Kylling og broccoli i parmesanpasta": [25, ["Kog pastaen. Kom broccolibuketterne i gryden de sidste 3 minutter.", "Skær kyllingen i tern, og steg den i lidt olie i 6–8 minutter.", "Hæld pasta og broccoli fra, men gem 1 dl kogevand.", "Vend det hele sammen med revet parmesan og kogevandet til en cremet sauce. Smag til med peber."]],
+  "Laksepasta med citron og spinat": [25, ["Kog pastaen i godt saltet vand.", "Skær laksen i tern, og steg den forsigtigt i 3–4 minutter.", "Vend spinaten i panden, til den falder sammen.", "Rør skyren med revet citronskal, saften af ½ citron, salt og peber.", "Vend pasta, laks og sauce sammen ved lav varme."]],
+};
 // Valdemarsro dinners to pick from under Retter. Only names and links live here (the repo is public): the
 // ingredients are fetched through the worker when the user adds one, and the method when they open it.
 const VALDEMARSRO = [
@@ -1345,6 +1367,7 @@ function App() {
   const [cookFor, setCookFor] = useState(null);       // name of the meal shown in "Se opskrift"
   const [cookDone, setCookDone] = useState([]);       // ticked steps
   const [cookLoading, setCookLoading] = useState(false);
+  const [cookPortions, setCookPortions] = useState(null); // portions from the plan, to scale the ingredients
   const [pantryDraft, setPantryDraft] = useState("");
   const [freezerDraft, setFreezerDraft] = useState({ name: "", portions: 2 });
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
@@ -2837,7 +2860,7 @@ function App() {
                   <span className="small num">${m.portions} port.</span>
                   <button className="icon-btn" style=${{width:30, height:30}} aria-label="Flere portioner" disabled=${m.portions >= 16} onClick=${()=>setPortions(i, m.portions + 1)}>+</button>
                 </span>
-                ${(rec?.url || m.url) && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(rec || { name: m.name, url: m.url, ingredients: m.items.map(x => x.term) })}>Se opskrift</button>`}
+                ${(rec?.url || m.url || MEAL_STEPS[m.name]) && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(rec || { name: m.name, url: m.url, ingredients: m.items.map(x => x.term) }, m.portions)}>Se opskrift</button>`}
                 <button className="link-btn small" aria-expanded=${doneFor === i} onClick=${()=>{ setDoneFor(doneFor === i ? null : i); setDoneDraft({ rate: 0, note: "", freeze: Math.max(0, m.portions - plan.cookDays * (plan.perNight || 1)) }); }}>${doneFor === i ? "Luk" : "Lavet ✓"}</button>
               </div>`}
               ${doneFor === i && html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
@@ -2923,8 +2946,8 @@ function App() {
     flash("meals", `${ok} ${ok === 1 ? "ret" : "retter"} fra Valdemarsro er tilføjet${fail ? `, ${fail} kunne ikke hentes` : ""}. Tryk ♥ ved dem, du vil have oftere.`, 9000);
   };
   // "Se opskrift": the method is fetched the first time and kept with the meal (on this device only).
-  const openCook = async (m) => {
-    setCookFor(m.name); setCookDone([]);
+  const openCook = async (m, portions = null) => {
+    setCookFor(m.name); setCookDone([]); setCookPortions(portions);
     if (m.steps?.length || !m.url) return;
     setCookLoading(true);
     try { storeMeal(await fetchMeal(m.url), m); }
@@ -2940,20 +2963,22 @@ function App() {
   const CookView = () => {
     const m = allMeals.find(x => x.name === cookFor);
     if (!m) return null;
-    const steps = m.steps || [], am = mealAmounts(m), base = mealServings(m);
+    const own = MEAL_STEPS[m.name], steps = m.steps?.length ? m.steps : own?.[1] || [], am = mealAmounts(m), base = mealServings(m);
+    const por = cookPortions || base, k = por / base, minutes = m.minutes || own?.[0];
     let n = 0;
     return html`<div className="cook-sheet" role="dialog" aria-modal="true" aria-label=${m.name}>
       <div className="cook-inner">
         <div style=${{display:"flex", alignItems:"flex-start", gap:10}}>
           <div style=${{flex:1}}>
             <div style=${{fontSize:22, fontWeight:700, lineHeight:1.2}}>${m.name}</div>
-            <div className="small muted" style=${{marginTop:4}}>${base} portioner${m.minutes ? ` · ca. ${m.minutes} min.` : ""}${m.url ? html` · <a href=${m.url} target="_blank" rel="noopener" className="link-btn small">Original opskrift ↗</a>` : ""}</div>
+            <div className="small muted" style=${{marginTop:4}}>${m.lines?.length ? base : por} portioner${minutes ? ` · ca. ${minutes} min.` : ""}${m.url ? html` · <a href=${m.url} target="_blank" rel="noopener" className="link-btn small">Original opskrift ↗</a>` : ""}</div>
           </div>
           <button className="icon-btn" aria-label="Luk opskriften" onClick=${()=>setCookFor(null)}>✕</button>
         </div>
         ${macroLine(mealMacros(m))}
         <div className="section-head" style=${{marginTop:18}}><h2>Ingredienser</h2></div>
-        <ul className="cook-ings">${(m.lines?.length ? m.lines : m.ingredients.map(t => `${am[t] ? fmtAmount(am[t][0], am[t][1]) + " " : ""}${t}`)).map((l, i) => html`<li key=${i}>${l}</li>`)}</ul>
+        ${m.lines?.length && por !== base ? html`<div className="small muted" style=${{marginBottom:6}}>Opskriften er til ${base} portioner – du laver ${por}, så gang mængderne med ${String(Math.round(k * 100) / 100).replace(".", ",")}.</div>` : null}
+        <ul className="cook-ings">${(m.lines?.length ? m.lines : m.ingredients.map(t => `${am[t] ? fmtAmount(am[t][0] * k, am[t][1]) + " " : ""}${t}`)).map((l, i) => html`<li key=${i}>${l}</li>`)}</ul>
         <div className="section-head" style=${{marginTop:18}}><h2>Sådan gør du</h2>${steps.length > 0 && html`<span className="small faint">Tryk på et trin, når det er klaret</span>`}</div>
         ${cookLoading ? html`<div className="card empty">Henter fremgangsmåden…</div>`
           : steps.length ? html`<ol className="cook-steps">${steps.map((st, i) => st.startsWith("## ")
@@ -3065,7 +3090,7 @@ function App() {
 `}
         </div>
         <div className="end" style=${{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
-          ${m.url && !m.skip && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(m)}>Se opskrift</button>`}
+          ${(m.url || MEAL_STEPS[m.name]) && !m.skip && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(m)}>Se opskrift</button>`}
           ${!m.skip && html`<button className="link-btn small" aria-expanded=${openRecipe === m.name} onClick=${()=>setOpenRecipe(openRecipe === m.name ? null : m.name)}>${openRecipe === m.name ? "Luk" : "Mængder"}</button>`}
           <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
           ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop(s => ({...s, meals: (s.meals || []).filter(x => x.id !== m.id)})); showUndo(`${m.name} er slettet`, () => setShop(s => ({...s, meals: prev}))); }}>Slet</button>`}
