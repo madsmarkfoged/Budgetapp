@@ -271,7 +271,10 @@ function detectRecurring(transactions, sign, hidden = []) {
     const last = txs[txs.length - 1];
     if (last.date < stale) continue;
     const split = key !== subKey(last.description);
-    out.push({ key, name: prettyName(last.description) + (split ? ` (${Math.round(Math.abs(last.amount))} kr.)` : ""), raw: last.description, category: last.category, monthly: Math.abs(last.amount), last: last.date, months: months.size });
+    // Price rise: the newest charge is more than 3 % above the one before it.
+    const before = txs.length > 1 ? Math.abs(txs[txs.length - 2].amount) : null;
+    const rose = before && Math.abs(last.amount) > before * 1.03 ? { from: before, to: Math.abs(last.amount), date: last.date } : null;
+    out.push({ key, name: prettyName(last.description) + (split ? ` (${Math.round(Math.abs(last.amount))} kr.)` : ""), raw: last.description, category: last.category, monthly: Math.abs(last.amount), last: last.date, months: months.size, rose });
   }
   return out.sort((a, b) => b.monthly - a.monthly);
 }
@@ -1059,7 +1062,7 @@ async function fetchSaxoLedger(token) {
   const r = await get(base, `/cs/v1/reports/bookings/${encodeURIComponent(me.ClientKey)}?${q}`);
   const rows = (r.Data || []).map(b => ({
     date: (b.Date || "").slice(0, 10), type: b.BkAmountType, label: BOOKING_LABEL[b.BkAmountType] || b.BkAmountType,
-    name: b.InstrumentDescription || "", amount: +(b.AmountAccountCurrency ?? b.Amount) || 0, account: b.AccountCurrency || "DKK",
+    name: b.InstrumentDescription || "", amount: +(b.AmountAccountCurrency ?? b.Amount) || 0, account: b.AccountCurrency || "DKK", accountId: b.AccountId || null,
   })).sort((a, b) => b.date.localeCompare(a.date));
   const sum = (type) => rows.filter(x => x.type === type).reduce((s, x) => s + x.amount, 0);
   return {
@@ -1094,6 +1097,8 @@ function normalizeData(d) {
   if (Array.isArray(d.subsHidden)) out.subsHidden = d.subsHidden;
   if (d.subsShare && typeof d.subsShare === "object") out.subsShare = d.subsShare;
   if (d.subsNames && typeof d.subsNames === "object") out.subsNames = d.subsNames;
+  if (d.prefs && typeof d.prefs === "object") out.prefs = d.prefs;
+  if (d.savedAt) out.savedAt = d.savedAt;
   if (d.shop) out.shop = {...DEFAULT_SHOP, ...d.shop};
   if (Array.isArray(d.invHistory)) out.invHistory = d.invHistory;
   if (d.saxoLedger) out.saxoLedger = d.saxoLedger;
@@ -1305,6 +1310,34 @@ async function callBridge(path, body = {}) {
 
 const redirectUrl = () => location.origin + location.pathname;
 
+// ---------------- sync between devices ----------------
+// The data is gzipped and encrypted (AES-GCM, key derived from the worker password) in the browser; the
+// worker only keeps the opaque blob in KV. Newest save wins; the other copy is kept as a local backup.
+const SYNC_META_KEY = "sync_meta";   // {at: time of the copy this device last sent/received}
+const SYNC_BACKUP_KEY = "budget_data_sync_backup";
+const te = new TextEncoder(), td = new TextDecoder();
+async function syncCryptoKey(secret) {
+  const base = await crypto.subtle.importKey("raw", te.encode(secret), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt: te.encode("budget-app-sync-v1"), iterations: 150000, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+const toB64 = (buf) => { const u = new Uint8Array(buf); let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = (b) => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+const gz = async (bytes, mode) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(mode === "z" ? new CompressionStream("gzip") : new DecompressionStream("gzip"))).arrayBuffer());
+async function sealData(obj, secret) {
+  let bytes = te.encode(JSON.stringify(obj)), z = false;
+  if (typeof CompressionStream !== "undefined") { bytes = await gz(bytes, "z"); z = true; }
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await syncCryptoKey(secret), bytes);
+  return { data: (z ? "z:" : "") + toB64(ct), iv: toB64(iv) };
+}
+async function openData(blob, secret) {
+  const z = blob.data.startsWith("z:");
+  const pt = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64(blob.iv) }, await syncCryptoKey(secret), fromB64(z ? blob.data.slice(2) : blob.data)));
+  return JSON.parse(td.decode(z ? await gz(pt, "u") : pt));
+}
+const deviceName = () => /iPhone/.test(navigator.userAgent) ? "iPhone" : /iPad/.test(navigator.userAgent) ? "iPad" : /Android/.test(navigator.userAgent) ? "Android" : /Mac/.test(navigator.userAgent) ? "Mac" : /Windows/.test(navigator.userAgent) ? "Windows-pc" : "computer";
+
 function beginOAuth(provider) {
   const nonce = uid().replace(/-/g, "");
   store.setJson(OAUTH_KEY, { provider, nonce, at: Date.now() });
@@ -1326,6 +1359,9 @@ const MORE_PAGES = [
   { id: "wealth", label: "Formue og gæld", icon: "wallet", sub: "Konti og gæld" },
   { id: "trips", label: "Rejsepulje", icon: "plane", sub: "Ferieopsparing og rejser med søs" },
   { id: "subs", label: "Abonnementer", icon: "repeat", sub: "Faste træk hver måned" },
+  { id: "report", label: "Månedsrapport", icon: "donut", sub: "Måneden opsummeret" },
+  { id: "trends", label: "Udvikling", icon: "trend", sub: "Kategorierne over de sidste måneder" },
+  { id: "su", label: "SU-fribeløb", icon: "school", sub: "Hvor meget du må tjene ved siden af" },
   { id: "connections", label: "Bankforbindelser", icon: "bank", sub: "Sparekassen Kronjylland og Saxo" },
   { id: "ai", label: "AI-analyse", icon: "spark", sub: "Råd baseret på dine tal" },
   { id: "import", label: "Import og værktøjer", icon: "upload", sub: "CSV, fast husleje, kategorier" },
@@ -1335,6 +1371,10 @@ const MORE_PAGES = [
 ];
 
 const RANGES = { "1M": 31, "3M": 92, "1Å": 366 };
+// Aktiesparekonto: deposit cap per year (skat.dk) and the flat tax on each year's gain (lagerbeskatning).
+const ASK_CAP = { 2025: 166200, 2026: 174200 };
+const ASK_TAX = 0.17;
+const isAskAccount = (a) => /aktiespare|askonto|\bask\b/i.test(`${a.name || ""} ${a.subType || ""} ${a.type || ""}`);
 
 function App() {
   const initial = useRef(null);
@@ -1357,6 +1397,12 @@ function App() {
   const [subsHidden, setSubsHidden] = useState(init.subsHidden || []);
   const [subsShare, setSubsShare] = useState(init.subsShare || {});
   const [subsNames, setSubsNames] = useState(init.subsNames || {}); // subKey -> the user's own name ("iCloud+")
+  const [prefs, setPrefs] = useState(init.prefs || {}); // su {limit, gross}, ask {accountId, jan1, deposits}, saxoAccounts
+  const [syncState, setSyncState] = useState({ status: "idle" }); // idle | busy | ok | off | error, with at/msg
+  const [syncChoice, setSyncChoice] = useState(null);  // first sync on a device that already has data
+  const [affordOpen, setAffordOpen] = useState(false);
+  const [affordAmt, setAffordAmt] = useState("");
+  const [reportMonth, setReportMonth] = useState(null);
   const [renameSub, setRenameSub] = useState(null);
   const [shop, setShop] = useState(init.shop || DEFAULT_SHOP);
   const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
@@ -1462,16 +1508,92 @@ function App() {
     if (d.subsHidden) setSubsHidden(d.subsHidden);
     if (d.subsShare) setSubsShare(d.subsShare);
     if (d.subsNames) setSubsNames(d.subsNames);
+    if (d.prefs) setPrefs(d.prefs);
     if (d.shop) setShop(d.shop);
     if (d.invHistory) setInvHistory(d.invHistory);
     if (d.saxoLedger) setSaxoLedger(d.saxoLedger);
   };
   const loadData = () => applyData(readStored());
 
+  // Every save is stamped with when it happened, so devices can tell which copy is newest. The first run after
+  // loading keeps the stored stamp, and a copy just received from another device keeps that device's stamp.
+  const savedAtRef = useRef(init.savedAt || 0), firstSaveRef = useRef(true), remoteAtRef = useRef(null);
+  const syncPayload = () => ({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,subsNames,prefs,invHistory,shop,saxoLedger});
   useEffect(() => {
-    const ok = store.set(STORAGE_KEY, JSON.stringify({version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,subsNames,invHistory,shop,saxoLedger}));
+    const at = remoteAtRef.current || (firstSaveRef.current ? savedAtRef.current : Date.now());
+    remoteAtRef.current = null; firstSaveRef.current = false; savedAtRef.current = at;
+    const ok = store.set(STORAGE_KEY, JSON.stringify({...syncPayload(), savedAt: at}));
     setSaveError(!ok);
-  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, subsNames, invHistory, shop, saxoLedger]);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, subsNames, prefs, invHistory, shop, saxoLedger]);
+
+  // ---------- sync between devices ----------
+  const syncMeta = () => store.json(SYNC_META_KEY) || { at: 0 };
+  const dirtyAtLoad = useRef((init.savedAt || 0) > (store.json(SYNC_META_KEY)?.at || 0));
+  const syncReady = useRef(false), syncBusy = useRef(false);
+  const applyRemote = (d, at) => {
+    store.set(SYNC_BACKUP_KEY, store.get(STORAGE_KEY) || "");
+    remoteAtRef.current = at;
+    applyData(normalizeData(d));
+    store.setJson(SYNC_META_KEY, { at });
+  };
+  const pushSync = async (force = false) => {
+    const b = store.json(BRIDGE_KEY);
+    if (!b?.secret || syncBusy.current) return;
+    syncBusy.current = true;
+    try {
+      const at = savedAtRef.current || Date.now();
+      const sealed = await sealData({...syncPayload(), savedAt: at}, b.secret);
+      const r = await callBridge("/sync/put", { ...sealed, at, device: deviceName(), force });
+      if (r.ok) { store.setJson(SYNC_META_KEY, { at }); setSyncState({ status: "ok", at: Date.now() }); }
+      else if (r.conflict) { syncBusy.current = false; return pullSync(true); }
+    } catch (e) { setSyncState(e.code === "no_kv" ? { status: "off" } : { status: "error", msg: e.message }); }
+    finally { syncBusy.current = false; }
+  };
+  // Fetch the shared copy. A newer one replaces this device's data, unless this device has its own unsent
+  // changes from before – then the newest wins and the other is kept as a backup.
+  const pullSync = async (afterConflict = false) => {
+    const b = store.json(BRIDGE_KEY);
+    if (!b?.secret || syncBusy.current) return;
+    syncBusy.current = true; setSyncState(s => ({ ...s, status: "busy" }));
+    try {
+      const r = await callBridge("/sync/get", {});
+      const meta = syncMeta();
+      if (r.empty) { syncReady.current = true; syncBusy.current = false; return pushSync(); }
+      if (r.at <= meta.at) {
+        syncReady.current = true; setSyncState({ status: "ok", at: Date.now() });
+        if (savedAtRef.current > meta.at) { syncBusy.current = false; return pushSync(); }
+        return;
+      }
+      const remote = await openData(r, b.secret);
+      if (!meta.at && transactions.length && !afterConflict) { setSyncChoice({ at: r.at, device: r.device, count: (remote.transactions || []).length }); setSyncState({ status: "ok", at: Date.now() }); return; }
+      const localNewer = dirtyAtLoad.current && savedAtRef.current > r.at;
+      if (localNewer) { syncReady.current = true; syncBusy.current = false; dirtyAtLoad.current = false; return pushSync(true); }
+      applyRemote(remote, r.at); dirtyAtLoad.current = false; syncReady.current = true;
+      setSyncState({ status: "ok", at: Date.now(), received: r.device || "en anden enhed" });
+    } catch (e) {
+      setSyncState(e.code === "no_kv" ? { status: "off" } : e instanceof NoBridgeError ? { status: "nobridge" } : { status: "error", msg: e.message });
+    } finally { syncBusy.current = false; }
+  };
+  useEffect(() => {
+    pullSync();
+    const onVis = () => { if (document.visibilityState === "visible") pullSync(); else if (syncReady.current && savedAtRef.current > syncMeta().at) pushSync(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+  // Send changes 15 seconds after the last one (KV allows about 1.000 writes a day on the free plan).
+  useEffect(() => {
+    if (!syncReady.current || savedAtRef.current <= syncMeta().at) return;
+    const t = setTimeout(() => pushSync(), 15000);
+    return () => clearTimeout(t);
+  }, [transactions, budgets, assets, liabilities, holdings, fxRates, cash, rejse, sync, history, rent, subsHidden, subsShare, subsNames, prefs, invHistory, shop, saxoLedger]);
+  const chooseSync = async (useRemote) => {
+    const b = store.json(BRIDGE_KEY);
+    setSyncChoice(null);
+    if (useRemote) {
+      const r = await callBridge("/sync/get", {});
+      applyRemote(await openData(r, b.secret), r.at); syncReady.current = true; setSyncState({ status: "ok", at: Date.now(), received: r.device });
+    } else { syncReady.current = true; savedAtRef.current = Date.now(); await pushSync(true); }
+  };
 
   useEffect(() => { navigator.storage?.persist?.().catch(()=>{}); }, []);
   useEffect(() => {
@@ -1506,6 +1628,11 @@ function App() {
   const invPutIn = saxoLedger?.deposits > 0 ? saxoLedger.deposits : null;
   const invGain = invPutIn != null ? invSecurities + (+cash || 0) - invPutIn : invSecurities - invCost;
   const invBasis = invPutIn ?? invCost;
+  // Aktiesparekonto: the Saxo account that looks like one (or the one the user picked), its value and deposits.
+  const saxoAccounts = prefs.saxoAccounts || [];
+  const askId = prefs.ask?.accountId || saxoAccounts.find(isAskAccount)?.id || null;
+  const askHoldings = askId ? holdings.filter(h => h.accountId === askId) : [];
+  const askValue = askHoldings.length ? askHoldings.reduce((s, h) => s + holdingValue(h), 0) : null;
   const sumAssets = assets.reduce((s,a)=>s+(+a.value||0),0);
   const sumLiab = liabilities.reduce((s,l)=>s+(+l.value||0),0);
   const netWorth = sumAssets + invValue - sumLiab;
@@ -1525,13 +1652,13 @@ function App() {
   useEffect(() => {
     if (!holdings.length || !(invValue > 0)) return;
     const today = isoDate(new Date());
-    const p = { d: today, v: Math.round(invValue), c: Math.round(invPutIn ?? (invCost + (+cash || 0))) };
+    const p = { d: today, v: Math.round(invValue), c: Math.round(invPutIn ?? (invCost + (+cash || 0))), ...(askValue != null ? { a: Math.round(askValue) } : {}) };
     setInvHistory(h => {
       const last = h[h.length-1];
-      if (last && last.d === today) return last.v === p.v && last.c === p.c ? h : [...h.slice(0,-1), p];
+      if (last && last.d === today) return last.v === p.v && last.c === p.c && last.a === p.a ? h : [...h.slice(0,-1), p];
       return [...h, p].slice(-1500);
     });
-  }, [invValue, invCost, invPutIn]);
+  }, [invValue, invCost, invPutIn, askValue]);
 
   const recurringIn = detectRecurring(transactions, 1);
   const subscriptionsRaw = detectSubscriptions(transactions, subsHidden);
@@ -1811,9 +1938,10 @@ function App() {
     const keep = hs.filter(h => h.source !== "saxo" && !SAXO_SEED_NAMES.includes(h.name) && !posNames.has(h.name) && !(h.ticker && posRoots.has(root(h.ticker))));
     const fromSaxo = p.positions.map(x => ({
       id: "saxo:" + x.id, name: x.name, ticker: root(x.symbol), currency: x.currency,
-      shares: x.amount, avgCost: x.avgPrice, price: x.price, type: x.assetType || null, source: "saxo",
+      shares: x.amount, avgCost: x.avgPrice, price: x.price, type: x.assetType || null, source: "saxo", accountId: x.accountId || null,
     }));
     setHoldings([...fromSaxo, ...keep]);
+    if (p.accounts?.length) setPrefs(pr => ({ ...pr, saxoAccounts: p.accounts }));
     setFxRates(fxNext);
     setCash(Math.round((p.cash || 0) * 100) / 100);
     setSync(prev => ({ ...prev, saxo: new Date().toISOString() }));
@@ -1998,7 +2126,7 @@ function App() {
   // ---------- backup ----------
 
   const exportData = () => {
-    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,subsNames,invHistory,shop,saxoLedger,exported:new Date().toISOString()};
+    const data = {version:DATA_VERSION,transactions,budgets,assets,liabilities,holdings,fxRates,cash,rejse,sync,history,rent,subsHidden,subsShare,subsNames,prefs,invHistory,shop,saxoLedger,exported:new Date().toISOString()};
     const blob = new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2094,13 +2222,40 @@ function App() {
           <div className="value">${pay.days === 0 ? "I dag" : pay.days === 1 ? "1 dag" : `${pay.days} dage`}</div>
           <div className="foot">${pay.date.getDate()}. ${MONTHS_DA[pay.date.getMonth()].slice(0,3)}.</div>
         </div>
-        <div className="tile">
+        <button className="tile" style=${{textAlign:"left", font:"inherit", color:"inherit", cursor:"pointer"}} aria-expanded=${affordOpen} onClick=${()=>setAffordOpen(!affordOpen)}>
           <div className="label">${left >= 0 ? "Tilbage at bruge" : "Over budget"}</div>
           <div className=${"value " + (left >= 0 ? "pos" : "neg")}><${CountUp} value=${Math.round(Math.abs(left))} /></div>
           <div className="foot">${left >= 0 ? `${fmt(perDay)} pr. dag til lønnen` : `i ${MONTHS_DA[+ym.slice(5)-1]}`}</div>
-        </div>
+          <div className="foot" style=${{color:"var(--accent)", marginTop:4}}>Har jeg råd? ›</div>
+        </button>
       </div>
+      ${affordOpen && (() => {
+        const amt = parseFloat((affordAmt || "").replace(/\./g, "").replace(",", ".")) || 0, after = left - amt, days = Math.max(1, pay.days);
+        return html`<div className="card stack" style=${{marginTop:10}}>
+          <form style=${{display:"flex", gap:8}} onSubmit=${e=>e.preventDefault()}>
+            <input className="input" style=${{flex:1}} type="text" inputMode="decimal" autoFocus value=${affordAmt} onChange=${e=>setAffordAmt(e.target.value)} placeholder="Hvad koster det? fx 800" aria-label="Beløb" />
+            <button className="btn soft" type="button" onClick=${()=>{ setAffordOpen(false); setAffordAmt(""); }}>Luk</button>
+          </form>
+          ${amt > 0 && html`<div style=${{fontSize:15}} className=${after < 0 ? "neg" : ""}>${after >= 0
+            ? html`<b className="pos">Ja.</b> Så har du ${fmt(after)} tilbage – <b>${fmt(after / days)} pr. dag</b> i ${days} dage til lønnen (i stedet for ${fmt(perDay)}).`
+            : html`<b>Det går over budgettet</b> med ${fmt(-after)}. Du skal spare ${fmt(-after / days)} pr. dag frem til lønnen, eller vente til efter lønningsdagen (om ${pay.days} dage).`}</div>`}
+          <div className="small faint">Regnet ud fra dit samlede budget for ${MONTHS_DA[+ym.slice(5)-1]}, minus det du allerede har brugt.</div>
+        </div>`; })()}
 
+      ${syncChoice && html`<div className="card stack" style=${{marginTop:12, borderLeft:"3px solid var(--accent)"}}>
+        <div><b>Der er data fra en anden enhed</b> (${syncChoice.device || "ukendt"}, gemt ${new Date(syncChoice.at).toLocaleString("da-DK", { day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" })}, ${syncChoice.count} poster). Denne enhed har ${transactions.length} poster. Hvilke skal begge enheder bruge?</div>
+        <div className="btns"><button className="btn primary" onClick=${()=>chooseSync(true)}>Brug den anden enheds data</button><button className="btn" onClick=${()=>chooseSync(false)}>Brug denne enheds data</button></div>
+        <div className="small faint">Det, du ikke vælger, gemmes som en backup på denne enhed.</div>
+      </div>`}
+      ${(() => { const d = new Date(), lastPay = paydayIn(d.getFullYear(), d.getMonth()) <= d ? paydayIn(d.getFullYear(), d.getMonth()) : paydayIn(d.getMonth() ? d.getFullYear() : d.getFullYear() - 1, (d.getMonth() + 11) % 12);
+        const since = Math.floor((d - lastPay) / 864e5); const rm = prevMonth(currentBudgetMonth());
+        return since >= 0 && since <= 5 && monthStats(rm).count > 0 && html`<button className="tip tap" style=${{width:"100%", textAlign:"left", font:"inherit", color:"inherit"}} onClick=${()=>{ setReportMonth(rm); setPage("more"); setSub("report"); window.scrollTo(0,0); }}>
+          <div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="donut" /></div>
+          <div>Din rapport for <b>${monthName(rm).toLowerCase()}</b> er klar. Tryk for at se, hvordan måneden gik.</div></button>`; })()}
+      ${subscriptions.filter(x => x.rose && x.rose.date >= addDays(isoDate(new Date()), -45)).map(x => html`<div key=${x.key} className="tip">
+        <div className="sq sm" style=${{background:"var(--neg-bg)", color:"var(--neg)"}}><${Icon} name="alert" /></div>
+        <div><b>${x.name}</b> er steget fra ${fmt(x.rose.from)} til ${fmt(x.rose.to)} om måneden (${fmt((x.rose.to - x.rose.from) * 12)} mere om året).</div>
+      </div>`)}
       ${insight && html`<div className="tip">
         <div className="sq sm" style=${{background: insight.good ? "var(--pos-bg)" : "var(--neg-bg)", color: insight.good ? "var(--pos)" : "var(--neg)"}}><${Icon} name=${insight.good ? "bulb" : "alert"} /></div>
         <div>${insight.text}</div>
@@ -2264,6 +2419,46 @@ function App() {
     </div>`;
   };
 
+  // Aktiesparekonto and tax: how much of the cap is used, and roughly what this year's gain costs in tax.
+  const AskBlock = () => {
+    const year = new Date().getFullYear(), cap = ASK_CAP[year] || ASK_CAP[Math.max(...Object.keys(ASK_CAP).map(Number))];
+    const ask = prefs.ask || {}, setAsk = (patch) => setPrefs(pr => ({ ...pr, ask: { ...(pr.ask || {}), ...patch } }));
+    const rows = (saxoLedger?.rows || []).filter(r => r.type === "Cash Amount" && askId && r.accountId === askId);
+    const ledgerKnows = rows.length > 0;
+    const deposits = ledgerKnows ? rows.reduce((s, r) => s + r.amount, 0) : (+ask.deposits || null);
+    const depYear = ledgerKnows ? rows.filter(r => r.date >= `${year}-01-01`).reduce((s, r) => s + r.amount, 0) : null;
+    const firstDeposit = ledgerKnows ? rows.map(r => r.date).sort()[0] : null;
+    const hist = invHistory.filter(x => x.a != null && x.d < `${year}-01-01`).pop();
+    const jan1 = ask.jan1 != null && ask.jan1 !== "" ? +ask.jan1 : hist ? hist.a : firstDeposit && firstDeposit >= `${year}-01-01` ? 0 : null;
+    const gain = askValue != null && jan1 != null && depYear != null ? askValue - jan1 - depYear : null;
+    const other = invValue - (askValue || 0);
+    if (!holdings.length) return null;
+    return html`<div className="section">
+      <div className="section-head"><h2>Aktiesparekonto og skat</h2></div>
+      <div className="card stack">
+        ${!saxoAccounts.length ? html`<div className="small muted">Synkronisér Saxo (log ind under Invest.), så kan appen se, hvilke beholdninger der ligger på din aktiesparekonto.</div>` : html`
+          ${!saxoAccounts.some(isAskAccount) && html`<label className="field">Hvilken konto er din aktiesparekonto?<select className="input" value=${askId || ""} onChange=${e=>setAsk({ accountId: e.target.value || null })}>
+            <option value="">Vælg konto</option>${saxoAccounts.map(a => html`<option key=${a.id} value=${a.id}>${a.name}${a.subType ? ` (${a.subType})` : ""}</option>`)}</select></label>`}
+          ${askId && html`<div>
+            <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Værdi på aktiesparekontoen</span><b className="num">${askValue != null ? fmt(askValue) : "–"}</b></div>
+            ${deposits != null && html`<div style=${{marginTop:10}}>
+              <div style=${{display:"flex", justifyContent:"space-between", gap:12}} className="small"><span>Indbetalt ${fmt(deposits)} af loftet ${fmt(cap)}</span><span className=${deposits >= cap ? "pos" : ""}>${deposits >= cap ? "Fuldt indbetalt" : `${fmt(cap - deposits)} tilbage`}</span></div>
+              <div className="bar" style=${{height:6}}><div style=${{width:`${Math.min(100, deposits / cap * 100)}%`, background:"var(--accent)"}}></div></div>
+            </div>`}
+            ${gain != null ? html`<div className="small" style=${{marginTop:10}}>Afkast i ${year} indtil nu: <b className=${gain >= 0 ? "pos" : "neg"}>${gain >= 0 ? "+" : ""}${fmt(gain)}</b> → skat ca. <b>${fmt(Math.max(0, gain * ASK_TAX))}</b> (17 %).${gain < 0 ? " Et tab kan modregnes i senere års gevinst på kontoen." : ""}</div>`
+              : html`<div className="small muted" style=${{marginTop:10}}>For at beregne skatten mangler appen værdien 1. januar ${year}${deposits == null ? " og hvor meget du har indbetalt" : ""}.</div>`}
+            ${(!ledgerKnows || (jan1 == null && !hist)) && html`<div style=${{display:"flex", gap:8, flexWrap:"wrap", marginTop:8}}>
+              ${!ledgerKnows && html`<label className="field" style=${{flex:1, minWidth:140}}>Indbetalt i alt (kr.)<input className="input privacy" type="number" inputMode="decimal" value=${ask.deposits ?? ""} onChange=${e=>setAsk({ deposits: e.target.value })} /></label>`}
+              <label className="field" style=${{flex:1, minWidth:140}}>Værdi 1. januar (kr.)<input className="input privacy" type="number" inputMode="decimal" value=${ask.jan1 ?? ""} placeholder=${jan1 != null ? String(Math.round(jan1)) : ""} onChange=${e=>setAsk({ jan1: e.target.value })} /></label>
+            </div>`}
+          </div>`}
+        `}
+        <div className="small faint">Aktiesparekontoen lagerbeskattes med 17 % af årets værdistigning, også selvom du ikke sælger. Skatten trækkes normalt automatisk fra kontoen i starten af næste år. Loftet for ${year} er ${fmt(cap)} (skat.dk).</div>
+        ${other > 0 && html`<div className="small faint">Resten af depotet (ca. ${fmt(other)}) beskattes som aktieindkomst: 27 % op til progressionsgrænsen og 42 % derover. Aktier beskattes, når du sælger. Nogle ETF'er beskattes hvert år af værdistigningen – se SKAT's liste over aktiebaserede investeringsselskaber. Beløbene er skøn, ikke rådgivning.</div>`}
+      </div>
+    </div>`;
+  };
+
   const InvestPage = () => {
     const saxoConnected = Boolean(saxoTokens) || Boolean(sync.saxo);
     const manual = holdings.filter(h => h.source !== "saxo");
@@ -2337,6 +2532,7 @@ function App() {
         </div>`)}</div>`}
       </div>`}
 
+      ${AskBlock()}
       <div className="section">
         <div className="section-head"><h2>Beholdninger</h2><button className="link-btn" onClick=${()=>{ const h = {id:uid(),name:"Ny beholdning",ticker:"",currency:"DKK",shares:0,avgCost:0,price:0}; setHoldings([...holdings, h]); setOpenHolding(h.id); }}>+ Manuel</button></div>
         ${holdings.length === 0 ? html`<div className="card empty">Ingen beholdninger. Forbind Saxo, eller tilføj manuelt.</div>` : html`
@@ -2541,6 +2737,7 @@ function App() {
                   <input name="n" className="input sm" style=${{flex:1}} defaultValue=${subsNames[x.key] || ""} placeholder="Fx iCloud+" aria-label="Navn på abonnementet" autoFocus />
                   <button className="btn soft" type="submit">Gem</button></form>`
               : html`<div className="title">${x.name} <button className="link-btn small" onClick=${()=>setRenameSub(x.key)}>Omdøb</button></div>`}
+            ${x.rose && html`<div className="small neg" style=${{marginTop:2}}>Steget fra ${fmt(x.rose.from)} til ${fmt(x.rose.to)} (${shortDate(x.rose.date)})</div>`}
             <div className="sub">${x.share ? `${fmt(x.monthly)} − ${fmt(Math.min(x.share.monthly, x.monthly))} fra ${x.share.name}` : `${fmt(x.monthly * 12)} om året`} · sidst ${shortDate(x.last)}</div>
             ${recurringIn.length > 0 && html`<select className="input sm" style=${{marginTop:6, maxWidth:"100%"}} aria-label=${`Andre betaler med på ${x.name}`} value=${x.share?.key || "none"}
               onChange=${e=>setSubsShare({...subsShare, [x.key]: e.target.value})}>
@@ -2553,6 +2750,112 @@ function App() {
         </div>`)}</div>`}
     ${subsHidden.length > 0 && html`<button className="btn soft block" style=${{marginTop:12}} onClick=${()=>setSubsHidden([])}>Vis ${subsHidden.length} skjulte igen</button>`}
   </div>`;
+  };
+
+  // ---------- Månedsrapport ----------
+  const ReportPage = () => {
+    const ym = reportMonth || prevMonth(currentBudgetMonth()), pm = prevMonth(ym);
+    const st = monthStats(ym), pv = monthStats(pm), cur = currentBudgetMonth();
+    const save = st.inc - st.exp, saveP = pv.inc - pv.exp;
+    const delta = (a, b, invert) => { const d = a - b; if (!b || Math.abs(d) < 1) return null; const good = invert ? d < 0 : d > 0;
+      return html`<span className=${"small " + (good ? "pos" : "neg")}>${d > 0 ? "+" : "−"}${fmt(Math.abs(d))}</span>`; };
+    const cats = budgetCats.map(c => ({ c, v: st.byCat[c] || 0, p: pv.byCat[c] || 0, b: +budgets[c] || 0 })).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+    const big = transactions.filter(t => t.amount < 0 && !t.trip && !EXCLUDED.includes(t.category) && budgetMonth(t.date, t.amount, t.category) === ym)
+      .sort((a, b) => a.amount - b.amount).slice(0, 5);
+    const food = cats.find(x => x.c === "Mad & dagligvarer");
+    const over = cats.filter(x => x.b > 0 && x.v > x.b);
+    const name = monthName(ym), pname = monthName(pm).toLowerCase();
+    return html`<div>
+      <div style=${{display:"flex", alignItems:"center", gap:10, marginBottom:12}}>
+        <button className="icon-btn" aria-label="Forrige måned" onClick=${()=>setReportMonth(pm)}>‹</button>
+        <div style=${{flex:1, textAlign:"center", fontWeight:650, fontSize:18}}>${monthLabel(ym)}</div>
+        <button className="icon-btn" aria-label="Næste måned" disabled=${ym >= cur} onClick=${()=>setReportMonth(addMonths(ym, 1))}>›</button>
+      </div>
+      <div className="card" style=${{fontSize:15, lineHeight:1.55}}>
+        I ${name.toLowerCase()} brugte du <b>${fmt(st.exp)}</b>${pv.exp ? html` – ${st.exp <= pv.exp ? html`<b className="pos">${fmt(pv.exp - st.exp)} mindre</b>` : html`<b className="neg">${fmt(st.exp - pv.exp)} mere</b>`} end i ${pname}` : ""}.
+        ${st.inc > 0 && html` Du fik <b>${fmt(st.inc)}</b> ind, så du ${save >= 0 ? html`havde <b className="pos">${fmt(save)}</b> til overs` : html`brugte <b className="neg">${fmt(-save)}</b> mere end du tjente`}.`}
+        ${food && food.b > 0 && html` Madbudgettet ${food.v <= food.b ? html`holdt med <b className="pos">${fmt(food.b - food.v)}</b> til overs` : html`blev overskredet med <b className="neg">${fmt(food.v - food.b)}</b>`}.`}
+        ${over.length > 0 && html` Over budget: ${over.map(x => x.c.toLowerCase()).join(", ")}.`}
+      </div>
+      <div className="stats" style=${{marginTop:12}}>
+        <div className="stat"><div className="label">Indkomst</div><div className="value pos">${fmt(st.inc)}</div>${delta(st.inc, pv.inc)}</div>
+        <div className="stat"><div className="label">Udgifter</div><div className="value">${fmt(st.exp)}</div>${delta(st.exp, pv.exp, true)}</div>
+        <div className="stat"><div className="label">Overskud</div><div className=${"value " + (save >= 0 ? "pos" : "neg")}>${fmt(save)}</div>${delta(save, saveP)}</div>
+      </div>
+      <div className="section">
+        <div className="section-head"><h2>Kategorier</h2><span className="small faint">mod ${pname}</span></div>
+        <div className="list">${cats.map(x => html`<div key=${x.c} className="row" style=${{minHeight:50}}>
+          <${CatIcon} cat=${x.c} small />
+          <div className="main"><div className="title">${x.c}</div>${x.b > 0 && html`<div className="bar" style=${{height:4, marginTop:5}}><div style=${{width:`${Math.min(100, x.v / x.b * 100)}%`, background: x.v > x.b ? "var(--neg)" : CAT_COLORS[x.c]}}></div></div>`}</div>
+          <div className="end"><div className="num">${fmt(x.v)}</div>${delta(x.v, x.p, true)}</div>
+        </div>`)}</div>
+      </div>
+      ${big.length > 0 && html`<div className="section">
+        <div className="section-head"><h2>Største udgifter</h2></div>
+        <div className="list">${big.map(t => html`<div key=${t.id} className="row" style=${{minHeight:46}}>
+          <div className="main"><div className="title">${prettyName(t.description)}</div><div className="sub">${shortDate(t.date)} · ${t.category}</div></div>
+          <div className="end num">${fmt(t.amount)}</div>
+        </div>`)}</div>
+      </div>`}
+      <div className="small faint" style=${{marginTop:12}}>Faste abonnementer koster dig ca. ${fmt(subsMonthly)} om måneden.</div>
+    </div>`;
+  };
+
+  // ---------- Udvikling: categories over the last six months ----------
+  const TrendsPage = () => {
+    const cur = currentBudgetMonth(), months = [5, 4, 3, 2, 1, 0].map(n => addMonths(cur, -n));
+    const stats = months.map(m => monthStats(m));
+    const done = months.slice(0, -1); // the running month isn't over, so averages use the five before it
+    const rows = budgetCats.map(c => {
+      const vals = stats.map(st => st.byCat[c] || 0), avg = vals.slice(0, -1).reduce((s, v) => s + v, 0) / done.length;
+      const last = vals[vals.length - 2];
+      return { c, vals, avg, last, change: avg > 0 ? (last - avg) / avg : null };
+    }).filter(r => r.vals.some(v => v > 0)).sort((a, b) => b.avg - a.avg);
+    const totals = stats.map(st => st.exp), maxT = Math.max(1, ...totals);
+    return html`<div>
+      <div className="card stack">
+        <div className="small muted">Udgifter pr. måned. Den sidste søjle er den løbende måned.</div>
+        <div className="trend-bars">${totals.map((v, i) => html`<div key=${i}><div className="tb" style=${{height:`${Math.max(3, v / maxT * 100)}%`, opacity: i === totals.length - 1 ? .5 : 1}}></div><span>${MONTHS_DA[+months[i].slice(5) - 1].slice(0, 3)}</span><b>${fmtShort(v)}</b></div>`)}</div>
+      </div>
+      <div className="section">
+        <div className="section-head"><h2>Kategorier</h2><span className="small faint">${MONTHS_DA[+months[4].slice(5) - 1]} mod gennemsnit</span></div>
+        <div className="list">${rows.map(r => { const mx = Math.max(1, ...r.vals); return html`<div key=${r.c} className="row" style=${{minHeight:58}}>
+          <${CatIcon} cat=${r.c} small />
+          <div className="main"><div className="title">${r.c}</div><div className="sub">snit ${fmt(r.avg)} pr. måned</div></div>
+          <div className="mini-bars" aria-hidden="true">${r.vals.map((v, i) => html`<i key=${i} style=${{height:`${Math.max(2, v / mx * 100)}%`, background: CAT_COLORS[r.c], opacity: i === r.vals.length - 1 ? .45 : 1}}></i>`)}</div>
+          <div className="end" style=${{minWidth:58}}>${r.change == null ? html`<span className="small faint">–</span>` : html`<span className=${"small " + (r.change > 0.15 ? "neg" : r.change < -0.15 ? "pos" : "muted")}>${r.change > 0 ? "+" : ""}${Math.round(r.change * 100)} %</span>`}</div>
+        </div>`; })}</div>
+      </div>
+    </div>`;
+  };
+
+  // ---------- SU-fribeløb ----------
+  const SuPage = () => {
+    const su = prefs.su || {}, setSu = (patch) => setPrefs(pr => ({ ...pr, su: { ...(pr.su || {}), ...patch } }));
+    const year = new Date().getFullYear(), gross = +su.gross || 10000, limit = +su.limit || 0;
+    const paid = new Set(transactions.filter(t => t.category === "Løn" && t.amount > 0 && (t.date || "").startsWith(String(year))).map(t => t.date.slice(0, 7)));
+    const monthsLeft = 12 - new Date().getMonth() - (paid.has(isoDate(new Date()).slice(0, 7)) ? 1 : 0);
+    // SU counts "personlig indkomst": pay before tax minus 8 % AM-bidrag.
+    const pi = (n) => n * gross * 0.92;
+    const sofar = pi(paid.size), forecast = pi(paid.size + Math.max(0, monthsLeft));
+    return html`<div>
+      <div className="card stack">
+        <div className="small muted">Tjener du mere end dit fribeløb ved siden af SU, skal du betale SU tilbage. Fribeløbet afhænger af, hvor mange måneder du får SU – find dit beløb for ${year} på minSU (su.dk).</div>
+        <label className="field">Dit fribeløb for ${year} (kr.)<input className="input privacy" type="number" inputMode="decimal" value=${su.limit ?? ""} placeholder="fx 180000" onChange=${e=>setSu({ limit: e.target.value })} /></label>
+        <label className="field">Løn før skat pr. måned (kr.)<input className="input privacy" type="number" inputMode="decimal" value=${su.gross ?? ""} placeholder="10000" onChange=${e=>setSu({ gross: e.target.value })} /></label>
+      </div>
+      <div className="card stack" style=${{marginTop:12}}>
+        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Indtil nu i ${year} (${paid.size} ${paid.size === 1 ? "lønudbetaling" : "lønudbetalinger"})</span><b className="num">${fmt(sofar)}</b></div>
+        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Forventet for hele året</span><b className="num">${fmt(forecast)}</b></div>
+        ${limit > 0 ? html`
+          <div className="bar" style=${{height:8}}><div style=${{width:`${Math.min(100, forecast / limit * 100)}%`, background: forecast > limit ? "var(--neg)" : forecast > limit * 0.85 ? "var(--warn, #EF9F27)" : "var(--pos)"}}></div></div>
+          <div className=${forecast > limit ? "neg" : ""} style=${{fontSize:15}}>${forecast > limit
+            ? html`Du ser ud til at tjene <b>${fmt(forecast - limit)}</b> for meget i ${year}. Du kan sætte SU på pause for nogle måneder eller betale overskydende SU tilbage.`
+            : html`Du kan tjene ca. <b className="pos">${fmt(limit - forecast)}</b> mere i ${year}, før du rammer fribeløbet.`}</div>`
+          : html`<div className="small">Indtast dit fribeløb ovenfor, så viser appen, hvor tæt du er på.</div>`}
+        <div className="small faint">Regnet som løn før skat minus 8 % AM-bidrag, for hver måned med en lønudbetaling på kontoen, plus samme løn resten af året. Kun et skøn – SU's opgørelse bygger på din årsopgørelse.</div>
+      </div>
+    </div>`;
   };
 
   const detectedStores = usualStores(transactions);
@@ -3430,19 +3733,32 @@ function App() {
     </div>`;
   };
 
-  const DataPage = () => html`<div className="card stack">
-    <div className="small muted">Alt gemmes lokalt på denne enhed. Flyt data mellem pc og telefon med eksport/import. Backups fra claude.ai-versionen kan også importeres. Nøgler og bankadgang er ikke med i backuppen.</div>
+  const DataPage = () => html`<div>
+    <div className="card stack" style=${{marginBottom:12}}>
+      <div style=${{fontWeight:600}}>Synkronisering mellem enheder</div>
+      <div className="small muted">Telefon og computer deler de samme data via din worker. Data krypteres på enheden med din worker-adgangskode, før de sendes, og den nyeste ændring vinder.</div>
+      <div className=${"small " + (syncState.status === "error" ? "neg" : syncState.status === "ok" ? "pos" : "")}>${
+        syncState.status === "ok" ? `Synkroniseret ${new Date(syncState.at).toLocaleTimeString("da-DK", { hour:"2-digit", minute:"2-digit" })}${syncState.received ? ` – hentede data fra ${syncState.received}` : ""}.`
+        : syncState.status === "busy" ? "Synkroniserer…"
+        : syncState.status === "off" ? "Ikke sat op endnu: workeren mangler en KV-binding ved navn SYNC (se SETUP.md)."
+        : syncState.status === "nobridge" ? "Kræver forbindelsen til din worker (Mere → Bankforbindelser)."
+        : syncState.status === "error" ? `Fejl: ${syncState.msg}` : "Venter…"}</div>
+      <button className="btn soft" disabled=${syncState.status === "busy"} onClick=${async ()=>{ await pullSync(); if (savedAtRef.current > syncMeta().at) await pushSync(); }}>Synkronisér nu</button>
+    </div>
+    <div className="card stack">
+    <div className="small muted">Alt gemmes lokalt på denne enhed (og deles via synkroniseringen ovenfor). Du kan også flytte data med eksport/import. Backups fra claude.ai-versionen kan også importeres. Nøgler og bankadgang er ikke med i backuppen.</div>
     <div className="btns">
       <button className="btn primary" onClick=${exportData}>Eksportér backup</button>
       <button className="btn" onClick=${()=>importRef.current && importRef.current.click()}>Importér backup</button>
     </div>
     <${Msg} k="backup" />
     <div className="small faint">${transactions.length} poster · ${holdings.length} beholdninger · ${assets.length} aktiver</div>
+    </div>
   </div>`;
 
   const MorePage = () => {
     if (sub) {
-      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
+      const Sub = { wealth: WealthPage, trips: TripsPage, subs: SubsPage, report: ReportPage, trends: TrendsPage, su: SuPage, connections: ConnectionsPage, ai: AiPage, import: ImportPage, appearance: AppearancePage, apikey: ApiKeyPage, data: DataPage }[sub];
       return Sub ? Sub() : null;
     }
     const lastBackup = +store.get(BACKUP_KEY) || 0;

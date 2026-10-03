@@ -80,6 +80,17 @@ Appen viser den selv under *Mere → Bankforbindelser*.
    - Første gang hentes op til et år tilbage. Har du allerede importeret CSV-filer, starter hentningen dagen efter din nyeste post.
 4. **Log ind på Saxo** → dine beholdninger, kurser og kontantbeholdning hentes.
 
+## 5. Synkronisering mellem telefon og computer (valgfrit)
+
+Appen kan dele de samme data mellem dine enheder via workeren. Data krypteres på enheden med din `APP_SECRET`, før de sendes.
+
+1. I Cloudflare: **Storage & Databases → KV → Create** (eller **Workers KV → Create namespace**). Kald den `budget-sync`.
+2. Åbn workeren **budget-bridge → Settings → Bindings → Add → KV namespace**.
+3. Variabelnavn: `SYNC`. KV namespace: `budget-sync`. Gem og deploy.
+4. Åbn appen på begge enheder. Første gang spørger appen, hvilke data der skal bruges, hvis begge har data.
+
+Status ses under **Mere → Data og backup**.
+
 ## Til daglig
 
 - Banken synkroniseres automatisk, når du åbner appen (højst hver 8. time), og når du trykker ↻ øverst.
