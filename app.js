@@ -369,7 +369,7 @@ function beginOAuth(provider) {
 
 const PAGES = [
   { id: "start", label: "Hjem", icon: "home" },
-  { id: "tx", label: "Poster", icon: "list" },
+  { id: "home", label: "Overblik", icon: "wallet" },
   { id: "budget", label: "Budget", icon: "donut" },
   { id: "invest", label: "Invest.", icon: "trend" },
   { id: "food", label: "Mad", icon: "food" },
@@ -3345,7 +3345,7 @@ function App() {
     ${(page === "home" || page === "tx") && !quick && html`<button className="fab" aria-label="Hurtig udgift" onClick=${()=>setQuick({ amt: "", cat: "Mad & dagligvarer", note: "", kind: "out" })}><${Icon} name="plus" /></button>`}
     ${msgs.quick && html`<div className="toast" role="status"><span>${msgs.quick}</span></div>`}
     <nav className="nav"><div className="nav-inner">
-      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id || (p.id === "start" && page === "home") ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); scrollToTop(); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
+      ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id || (p.id === "home" && page === "tx") ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); scrollToTop(); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
     </div></nav>
   </div>`;
 }
