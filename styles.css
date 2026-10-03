@@ -340,3 +340,8 @@ select.input { appearance: auto; }
 .cat-tabs::-webkit-scrollbar { display: none; }
 .cat-tabs button { flex-shrink: 0; border: 1px solid var(--border); background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 999px; cursor: pointer; }
 .cat-tabs button.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+/* Macros per portion in the recipe view */
+.macro-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.macro-grid > div { background: var(--track); border-radius: 10px; padding: 8px 6px; text-align: center; display: flex; flex-direction: column; gap: 1px; }
+.macro-grid b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.macro-grid span { font-size: 11.5px; color: var(--text-2); }

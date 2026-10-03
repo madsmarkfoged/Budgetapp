@@ -349,16 +349,16 @@ const MEAL_TEMPLATES = [
 // Ingredients to pick from, grouped the way a Danish supermarket is laid out (also the shopping-list order).
 // No chain publishes an open product catalogue, so this is a hand-made list of common raw ingredients.
 const INGREDIENT_GROUPS = [
-  ["Grønt", ["løg", "rødløg", "skalotteløg", "forårsløg", "porre", "hvidløg", "gulerødder", "kartofler", "søde kartofler", "pastinak", "rødbeder", "knoldselleri", "bladselleri", "squash", "aubergine", "peberfrugt", "champignon", "svampe", "spinat", "grønkål", "broccoli", "blomkål", "rosenkål", "spidskål", "hvidkål", "rødkål", "grønne bønner", "sukkerærter", "majs", "agurk", "tomater", "cherrytomater", "salat", "rucola", "avocado", "chili", "ingefær", "citron", "lime", "persille", "basilikum", "frisk koriander", "mynte", "dild", "purløg"]],
-  ["Frugt", ["bananer", "æbler", "pærer", "appelsiner", "blåbær", "jordbær", "hindbær", "mango", "ananas", "druer", "rosiner", "dadler"]],
-  ["Brød, pasta og ris", ["pasta", "spaghetti", "penne", "tagliatelle", "lasagneplader", "nudler", "ris", "basmatiris", "couscous", "bulgur", "quinoa", "havregryn", "müsli", "tortilla", "pitabrød", "naanbrød", "burgerboller", "pizzadej", "rugbrød", "toastbrød", "brød"]],
-  ["Kød", ["kylling", "kyllingelår", "hakket kylling", "kalkun", "hakket oksekød", "hakket svinekød", "hakket kalv og flæsk", "oksebøf", "oksekød i tern", "svinemørbrad", "nakkekoteletter", "flæsk", "bacon", "skinke", "pølser", "chorizo", "salsiccia", "kyllingepålæg"]],
-  ["Fisk", ["laks", "torsk", "tun", "rejer", "makrel", "fiskefrikadeller"]],
-  ["Mejeri og æg", ["æg", "mælk", "smør", "fløde", "madlavningsfløde", "creme fraiche", "ost", "revet ost", "mozzarella", "parmesan", "feta", "halloumi", "hytteost", "flødeost", "skyr", "græsk yoghurt", "yoghurt", "kvark", "proteinbudding"]],
-  ["Bønner, linser og nødder", ["røde linser", "grønne linser", "kikærter", "kidneybønner", "sorte bønner", "hvide bønner", "edamame", "nødder", "mandler", "peanuts", "peanutbutter", "solsikkekerner", "chiafrø"]],
-  ["Dåser og saucer", ["hakkede tomater", "passata", "tomatpuré", "tomatsauce", "kokosmælk", "pesto", "bouillon", "soja", "fiskesauce", "karrypasta", "sød chilisauce", "sriracha", "ketchup", "sennep", "mayonnaise", "salsa", "tahin", "honning", "rødvin", "hvidvin"]],
-  ["Frost", ["wokgrøntsager", "ærter", "frossen spinat", "frosne bær", "pommes frites", "frosne grøntsager"]],
-  ["Krydderier", ["tacokrydderi", "oregano", "timian", "paprika", "spidskommen", "karry", "garam masala", "gurkemeje", "kanel", "chiliflager", "hvidløgspulver"]],
+  ["Grønt", ["løg", "rødløg", "skalotteløg", "forårsløg", "porre", "hvidløg", "gulerødder", "kartofler", "små kartofler", "søde kartofler", "pastinak", "persillerod", "rødbeder", "jordskokker", "knoldselleri", "bladselleri", "fennikel", "squash", "hokkaido", "aubergine", "peberfrugt", "champignon", "portobello", "kantareller", "spinat", "grønkål", "pak choi", "broccoli", "blomkål", "rosenkål", "spidskål", "hvidkål", "rødkål", "grønne bønner", "sukkerærter", "asparges", "majs", "agurk", "tomater", "cherrytomater", "salat", "icebergsalat", "rucola", "feldsalat", "radiser", "avocado", "chili", "ingefær", "citron", "lime", "persille", "basilikum", "frisk koriander", "mynte", "dild", "purløg", "rosmarin", "karse"]],
+  ["Frugt", ["bananer", "æbler", "pærer", "appelsiner", "clementiner", "kiwi", "nektariner", "blommer", "blåbær", "jordbær", "hindbær", "druer", "melon", "mango", "ananas", "granatæble", "passionsfrugt", "dadler", "rosiner", "figner"]],
+  ["Brød, pasta og ris", ["pasta", "spaghetti", "penne", "fusilli", "rigatoni", "tagliatelle", "lasagneplader", "frisk pasta", "tortellini", "gnocchi", "nudler", "risnudler", "ris", "jasminris", "basmatiris", "brune ris", "risottoris", "couscous", "bulgur", "quinoa", "havregryn", "müsli", "cornflakes", "tortilla", "taco shells", "pitabrød", "naanbrød", "burgerboller", "pizzadej", "butterdej", "tærtedej", "rugbrød", "toastbrød", "brød", "boller", "panko"]],
+  ["Kød", ["kylling", "kyllingebryst", "kyllingeinderfilet", "kyllingelårfilet", "kyllingelår", "kyllingeunderlår", "kyllingevinger", "hel kylling", "hakket kylling", "kalkun", "hakket oksekød", "hakket svinekød", "hakket gris og kalv", "oksekød i tern", "tykstegsbøf", "højrebsbøf", "rib eye", "culotte", "svinemørbrad", "nakkefilet", "koteletter", "nakkekoteletter", "skinkeschnitzel", "flæskesteg", "flæsk", "medister", "frikadeller", "kødboller", "bacon", "skinke", "pølser", "chorizo", "salsiccia", "pepperoni", "kyllingepålæg", "lammeculotte", "andebryst"]],
+  ["Fisk", ["laks", "torsk", "kuller", "mørksej", "rødspætte", "tun", "rejer", "makrel", "fiskefars", "fiskefrikadeller", "fiskepinde"]],
+  ["Mejeri og æg", ["æg", "mælk", "kærnemælk", "smør", "fløde", "piskefløde", "madlavningsfløde", "creme fraiche", "skyr", "græsk yoghurt", "yoghurt", "ymer", "kvark", "proteinbudding", "ost", "revet ost", "skiveost", "mozzarella", "parmesan", "cheddar", "feta", "halloumi", "hytteost", "flødeost", "ricotta", "mascarpone", "brie"]],
+  ["Bønner, linser og nødder", ["røde linser", "grønne linser", "kikærter", "kidneybønner", "sorte bønner", "hvide bønner", "edamame", "tofu", "nødder", "mandler", "cashewnødder", "peanuts", "valnødder", "peanutbutter", "solsikkekerner", "græskarkerner", "chiafrø", "sesamfrø"]],
+  ["Dåser og saucer", ["hakkede tomater", "flåede tomater", "passata", "tomatpuré", "tomatsauce", "pizzasauce", "kokosmælk", "pesto", "bouillon", "soja", "østerssauce", "fiskesauce", "hoisin", "karrypasta", "sød chilisauce", "sriracha", "ketchup", "sennep", "mayonnaise", "salsa", "tahin", "honning", "oliven", "kapers", "soltørrede tomater", "rødvin", "hvidvin", "olivenolie", "rapsolie"]],
+  ["Frost", ["wokgrøntsager", "ærter", "frossen spinat", "frossen broccoli", "frosne bær", "pommes frites", "frosne grøntsager", "blomkålsris"]],
+  ["Krydderier", ["tacokrydderi", "oregano", "timian", "paprika", "røget paprika", "spidskommen", "karry", "garam masala", "gurkemeje", "kanel", "chiliflager", "hvidløgspulver", "laurbærblade", "kardemomme", "koriander", "muskatnød", "salt", "peber"]],
 ];
 // What people usually add to the simple starter versions.
 const MEAL_EXTRAS = {
@@ -531,6 +531,277 @@ for (const [t, [price, pack, p, piece]] of Object.entries(EXTRA_ING)) {
   NORMAL_PRICES[t] ??= price;
   ING[t] ??= piece ? { pack, piece, p } : { pack, p };
 }
+// REMA 1000's normal price (kr.), pack (g) and per 100 g: kcal, fat, carbs, protein – from REMA's webshop catalogue
+// (shop.rema1000.dk, fetched 3. okt. 2026; produce and spices have standard values). null = unknown.
+const REMA_DATA = {
+  "løg": [12, 1000, 40, 0.1, 8, 1.1],
+  "rødløg": [8, 500, 40, 0.1, 8, 1.1],
+  "skalotteløg": [10, 200, 72, 0.1, 17, 2.5],
+  "forårsløg": [8.5, null, 32, 0.2, 6, 1.8],
+  "porre": [6, null, 31, 0.3, 6, 1.5],
+  "hvidløg": [6, 90, 149, 0.5, 33, 6.4],
+  "gulerødder": [12, 1000, 41, 0.2, 8, 0.9],
+  "kartofler": [18, 2000, 77, 0.1, 17, 2],
+  "små kartofler": [10, 650, 77, 0.1, 17, 2],
+  "søde kartofler": [7, null, 86, 0.1, 20, 1.6],
+  "pastinak": [1.88, 130, 75, 0.3, 18, 1.2],
+  "persillerod": [1.5, 100, 55, 0.6, 10, 2.3],
+  "rødbeder": [28.23, 375, 71.0, 0.5, 16.0, 0.7],
+  "jordskokker": [1.5, 100, 73, 0, 17, 2],
+  "knoldselleri": [15, null, 42, 0.3, 9, 1.5],
+  "bladselleri": [17, null, 16, 0.2, 3, 0.7],
+  "fennikel": [11, null, 31, 0.2, 7, 1.2],
+  "squash": [8, null, 17, 0.3, 3, 1.2],
+  "hokkaido": [18, null, 40, 0.1, 9, 1.3],
+  "aubergine": [9, null, 25, 0.2, 6, 1],
+  "peberfrugt": [9, null, 31, 0.3, 6, 1],
+  "champignon": [19, 400, 22, 0.3, 3, 3.1],
+  "portobello": [20, 250, 22, 0.3, 3, 3.1],
+  "kantareller": [35, 150, 32, 0.5, 7, 1.5],
+  "spinat": [19, 250, 23, 0.4, 3.6, 2.9],
+  "grønkål": [20.06, 250, 61.0, 1.2, 4.7, 4.7],
+  "pak choi": [17, null, 13, 0.2, 2, 1.5],
+  "broccoli": [13.95, 400, 28.0, 0.5, 1.9, 2.8],
+  "blomkål": [17, null, 25, 0.3, 5, 1.9],
+  "rosenkål": [12, 400, 43, 0.3, 9, 3.4],
+  "spidskål": [13, null, 25, 0.1, 6, 1.3],
+  "hvidkål": [8, 1000, 25, 0.1, 6, 1.3],
+  "rødkål": [28.23, 580, 102.0, 0.5, 22.0, 1.3],
+  "grønne bønner": [18, 400, 31, 0.2, 7, 1.8],
+  "sukkerærter": [15, 125, 42, 0.2, 7.5, 2.8],
+  "asparges": [28, 250, 20, 0.1, 3.9, 2.2],
+  "majs": [7.91, 285, 79.0, 1.7, 12.0, 2.6],
+  "agurk": [10, null, 15, 0.1, 3.6, 0.7],
+  "tomater": [18, 500, 18, 0.2, 3.9, 0.9],
+  "cherrytomater": [15, 250, 18, 0.2, 3.9, 0.9],
+  "salat": [15, null, 15, 0.2, 2.9, 1.4],
+  "icebergsalat": [12, null, 14, 0.1, 3, 0.9],
+  "rucola": [10, 75, 25, 0.7, 3.7, 2.6],
+  "feldsalat": [10, 75, 21, 0.4, 3.6, 2],
+  "radiser": [9, null, 16, 0.1, 3.4, 0.7],
+  "avocado": [19, null, 160, 15, 9, 2],
+  "chili": [13, 70, 40, 0.4, 9, 1.9],
+  "ingefær": [14, 200, 80, 0.8, 18, 1.8],
+  "citron": [5, null, 29, 0.3, 9, 1.1],
+  "lime": [3, 60, 30, 0.2, 11, 0.7],
+  "persille": [13.05, 75, 42.0, 0.5, 7.4, 4.4],
+  "basilikum": [15, null, 23, 0.6, 2.7, 3.2],
+  "frisk koriander": [15, null, 23, 0.5, 3.7, 2.1],
+  "mynte": [15, null, 44, 0.7, 8, 3.3],
+  "dild": [10, null, 43, 1.1, 7, 3.5],
+  "purløg": [10, null, 30, 0.7, 4, 3.3],
+  "rosmarin": [15, 21, 131, 6, 21, 3.3],
+  "karse": [7, null, 32, 0.7, 5.5, 2.6],
+  "bananer": [2.5, null, 89, 0.3, 23, 1.1],
+  "æbler": [2.5, null, 52, 0.2, 14, 0.3],
+  "pærer": [22, 1000, 57, 0.1, 15, 0.4],
+  "appelsiner": [3.5, null, 47, 0.1, 12, 0.9],
+  "clementiner": [2.5, null, 47, 0.2, 12, 0.9],
+  "kiwi": [20, 500, 61, 0.5, 15, 1.1],
+  "nektariner": [null, null, 44, 0.3, 11, 1.1],
+  "blommer": [2.5, null, 46, 0.3, 11, 0.7],
+  "blåbær": [18, 125, 57, 0.3, 14, 0.7],
+  "jordbær": [12, 400, 41.0, 0.5, 8.1, 0.8],
+  "hindbær": [23, 125, 52, 0.7, 12, 1.2],
+  "druer": [24, 500, 69, 0.2, 18, 0.7],
+  "melon": [25, null, 36, 0.1, 9, 0.5],
+  "mango": [14, null, 60, 0.4, 15, 0.8],
+  "ananas": [20, null, 50, 0.1, 13, 0.5],
+  "granatæble": [12, null, 83, 1.2, 19, 1.7],
+  "passionsfrugt": [4, null, 97, 0.7, 23, 2.2],
+  "dadler": [25, 400, 280, 0.4, 75, 2.5],
+  "rosiner": [12.95, 250, 328.0, 0.5, 75.0, 3.3],
+  "figner": [15, null, 74, 0.3, 19, 0.8],
+  "pasta": [5.95, 500, 367.0, 1.5, 75.0, 12.0],
+  "spaghetti": [8.95, 1000, 367.0, 1.5, 75.0, 12.0],
+  "penne": [8.72, 500, 347.0, 1.8, 69.0, 11.0],
+  "fusilli": [12.17, 500, 350.0, 2.2, 67.0, 12.0],
+  "rigatoni": [13.5, 500, 351.0, 1.0, 70.0, 14.0],
+  "tagliatelle": [null, null, 360, 1.5, 72, 13],
+  "lasagneplader": [9.95, 500, 369.0, 3.8, 68.0, 14.0],
+  "frisk pasta": [13.95, 500, 282.0, 1.7, 57.0, 8.7],
+  "tortellini": [13.16, 250, 308.0, 7.4, 47.0, 12.0],
+  "gnocchi": [19.96, 500, 153.0, 1.3, 30.0, 4.1],
+  "nudler": [8.07, 250, 361.0, 3.4, 61.0, 16.0],
+  "risnudler": [10.14, 200, 351.0, 0.7, 80.0, 5.6],
+  "ris": [11.95, 1000, 353.0, 1.0, 78.0, 7.5],
+  "jasminris": [15.02, 1000, 357.0, 1.2, 78.0, 8.0],
+  "basmatiris": [17.95, 1000, 357.0, 1.2, 77.0, 9.0],
+  "brune ris": [16.57, 1000, 349.0, 2.5, 72.0, 8.0],
+  "risottoris": [23.01, 500, 347.0, 1.3, 75.0, 8.2],
+  "couscous": [15.16, 400, 379.0, 2.3, 72.0, 14.0],
+  "bulgur": [15.16, 400, 328.0, 2.3, 62.0, 11.0],
+  "quinoa": [18.95, 400, 304.0, 5.7, 45.0, 14.0],
+  "havregryn": [7.95, 1000, 369.0, 6.9, 57.0, 14.0],
+  "müsli": [27.95, 750, 433.0, 12.0, 69.0, 9.0],
+  "cornflakes": [22.28, 750, 376.0, 1.0, 82.0, 8.1],
+  "tortilla": [10.7, 370, 328.0, 7.3, 55.0, 9.4],
+  "taco shells": [14.95, 135, 477.0, 22.0, 63.0, 5.8],
+  "pitabrød": [12.95, 375, 264.0, 3.6, 47.0, 8.9],
+  "naanbrød": [12.2, 260, 290.0, 5.9, 48.0, 9.5],
+  "burgerboller": [15, 330, 294.0, 5.5, 50.0, 9.6],
+  "pizzadej": [10.95, 400, 271.0, 4.0, 44.0, 8.5],
+  "butterdej": [11.95, 275, 380.0, 23.0, 35.0, 5.6],
+  "tærtedej": [11.95, 275, 348.0, 14.0, 46.0, 5.3],
+  "rugbrød": [26.5, 950, 242.0, 7.3, 33.0, 6.6],
+  "toastbrød": [6, 375, 257.0, 3.1, 48.0, 7.4],
+  "brød": [null, null, 250, 3, 48, 8],
+  "boller": [26.5, 500, 296.0, 8.5, 43.0, 9.7],
+  "panko": [13.11, 200, 358.0, 1.6, 73.0, 11.0],
+  "kylling": [34.95, 450, 99.0, 1.6, 0.5, 21.0],
+  "kyllingebryst": [34.95, 450, 99.0, 1.6, 0.5, 21.0],
+  "kyllingeinderfilet": [25.65, 300, 101.0, 0.5, 0.5, 24.0],
+  "kyllingelårfilet": [29.95, 400, 157.0, 9.0, 0.5, 19.0],
+  "kyllingelår": [44.95, 1250, 194.0, 14.0, 0.5, 17.0],
+  "kyllingeunderlår": [29.95, 700, 120.0, 4.4, 0.5, 20.0],
+  "kyllingevinger": [32.95, 500, 139.0, 7.0, 0.5, 19.0],
+  "hel kylling": [89, 1100, 184.0, 12.0, 0.5, 19.0],
+  "hakket kylling": [29, 400, 121.0, 4.5, 0.5, 20.0],
+  "kalkun": [null, null, 110, 1.5, 0, 24],
+  "hakket oksekød": [39.95, 400, 170, 10, 0, 20],
+  "hakket svinekød": [24.95, 500, 175, 11, 0, 19],
+  "hakket gris og kalv": [29.95, 500, 172.0, 10.0, 0.5, 20.0],
+  "oksekød i tern": [49, 300, 117.0, 3.6, 0.5, 21.0],
+  "tykstegsbøf": [59.95, 300, 112.0, 2.9, 0.5, 21.0],
+  "højrebsbøf": [79.95, 360, 190, 12, 0, 21],
+  "rib eye": [79.95, 180, 195.0, 12.0, 0.5, 21.0],
+  "culotte": [229.89, 1150, 169.0, 10.0, 0.5, 19.0],
+  "svinemørbrad": [47.94, 600, 118.0, 3.8, 0.5, 21.0],
+  "nakkefilet": [79.9, 1000, 176.0, 12.0, 0.5, 17.0],
+  "koteletter": [29.95, 400, 133.0, 5.0, 0.5, 22.0],
+  "nakkekoteletter": [34.95, 300, 227.0, 17.0, 0.5, 18.0],
+  "skinkeschnitzel": [32.95, 250, 121.0, 3.4, 0.6, 22.0],
+  "flæskesteg": [57.86, 1450, 240.0, 18.0, 0.5, 19.0],
+  "flæsk": [29.95, 400, 316.0, 28.0, 0.5, 16.0],
+  "medister": [24.95, 500, 178.0, 12.0, 5.5, 12.0],
+  "frikadeller": [34.95, 360, 210.0, 14.0, 6.5, 14.0],
+  "kødboller": [55.11, 700, 172.0, 12.0, 6.0, 10.0],
+  "bacon": [12.95, 200, 267.0, 23.0, 0.5, 15.0],
+  "skinke": [13.59, 150, 112.0, 3.6, 0.9, 19.0],
+  "pølser": [24.95, 550, 252.0, 20.0, 4.9, 13.0],
+  "chorizo": [9.95, 80, 355.0, 28.0, 0.5, 25.0],
+  "salsiccia": [27.95, 200, 311.0, 27.0, 0.5, 17.0],
+  "pepperoni": [14.95, 100, 438.0, 40.0, 1.4, 18.0],
+  "kyllingepålæg": [20.14, 150, 133.0, 4.0, 1.0, 23.0],
+  "lammeculotte": [79, 300, 198.0, 14.0, 0.5, 18.0],
+  "andebryst": [20, 160, 289.0, 25.0, 1.0, 15.0],
+  "laks": [43.95, 225, 224.0, 16.0, 0.5, 20.0],
+  "torsk": [49.95, 225, 77.0, 0.6, 0.5, 18.0],
+  "kuller": [45, 400, 78.0, 0.6, 0.5, 18.0],
+  "mørksej": [59.95, 300, 78.0, 0.7, 0.5, 18.0],
+  "rødspætte": [39, 225, 86.0, 1.5, 0.5, 18.0],
+  "tun": [9.95, 140, 127.0, 1.2, 0.5, 29.0],
+  "rejer": [31.95, 170, 78.0, 1.5, 0.5, 16.0],
+  "makrel": [14.95, 125, 124.0, 8.9, 2.7, 8.3],
+  "fiskefars": [34.95, 400, 113.0, 3.0, 9.5, 12.0],
+  "fiskefrikadeller": [14.95, 120, 110.0, 2.8, 10.0, 11.0],
+  "fiskepinde": [27.5, 450, 189.0, 8.4, 16.0, 12.0],
+  "æg": [31.95, null, 139.0, 9.5, 1.1, 12.0],
+  "mælk": [10.95, 1000, 46.0, 1.5, 4.6, 3.5],
+  "kærnemælk": [13.95, 1000, 34.0, 0.5, 3.8, 3.3],
+  "smør": [19.95, 200, 707.0, 78.0, 0.7, 0.6],
+  "fløde": [14.95, 500, 346.0, 36.0, 3.3, 2.2],
+  "piskefløde": [14.95, 500, 346.0, 36.0, 3.3, 2.2],
+  "madlavningsfløde": [13.95, 250, 109.0, 7.6, 6.9, 3.4],
+  "creme fraiche": [18.95, 500, 188.0, 18.0, 3.0, 2.8],
+  "skyr": [19.95, 1000, 60.0, 0.5, 3.8, 10.0],
+  "græsk yoghurt": [18.95, 400, 132.0, 10.0, 4.5, 6.0],
+  "yoghurt": [9.95, 1000, 63.0, 3.5, 3.6, 3.6],
+  "ymer": [21.95, 1000, 71.0, 3.5, 3.4, 5.6],
+  "kvark": [null, null, 65, 0.2, 4, 12],
+  "proteinbudding": [14.95, 200, 76.0, 1.5, 7.8, 10.0],
+  "ost": [24.95, 500, 283.0, 21.0, 9.0, 15.0],
+  "revet ost": [24.95, 500, 283.0, 21.0, 9.0, 15.0],
+  "skiveost": [22.95, 300, 325.0, 25.0, 0.5, 24.0],
+  "mozzarella": [14.36, 200, 260.0, 15.0, 3.2, 27.0],
+  "parmesan": [37.95, 200, 398.0, 29.0, 0.5, 33.0],
+  "cheddar": [14.95, 150, 390.0, 31.0, 3.0, 25.0],
+  "feta": [19.95, 200, 260.0, 22.0, 0.5, 15.0],
+  "halloumi": [22.95, 250, 245.0, 19.0, 3.0, 17.0],
+  "hytteost": [14.92, 450, 75.0, 1.5, 2.3, 13.0],
+  "flødeost": [19.95, 150, 251.0, 25.0, 2.8, 4.5],
+  "ricotta": [12.95, 250, 97.0, 6.0, 3.7, 7.0],
+  "mascarpone": [22.95, 250, 399.0, 41.0, 3.5, 4.0],
+  "brie": [29.95, 350, 283.0, 23.0, 0.5, 19.0],
+  "røde linser": [16.95, 400, 346.0, 2.2, 52.0, 24.0],
+  "grønne linser": [16.95, 400, 352.0, 2.0, 53.0, 25.0],
+  "kikærter": [7.86, 240, 117.0, 2.2, 15.0, 6.8],
+  "kidneybønner": [7.15, 240, 107.0, 0.8, 14.0, 7.9],
+  "sorte bønner": [7.78, 252, 107.0, 1.0, 13.0, 8.1],
+  "hvide bønner": [7.15, 420, 94.0, 0.5, 15.0, 5.0],
+  "edamame": [14.95, 300, 130.0, 7.2, 2.8, 11.0],
+  "tofu": [16.95, 200, 87.0, 4.2, 0.5, 11.0],
+  "nødder": [15.95, 66, 597.0, 49.0, 14.0, 22.0],
+  "mandler": [8.95, 100, 617.0, 53.0, 5.0, 25.0],
+  "cashewnødder": [22.03, 150, 588.0, 46.0, 22.0, 18.0],
+  "peanuts": [9.25, 250, 626.0, 51.0, 14.0, 26.0],
+  "valnødder": [13.95, 100, 686.0, 65.0, 7.0, 15.0],
+  "peanutbutter": [25, 340, 607.0, 48.0, 17.0, 25.0],
+  "solsikkekerner": [11.5, 400, 616.0, 54.0, 3.6, 24.0],
+  "græskarkerner": [12.38, 150, 591.0, 49.0, 2.0, 34.0],
+  "chiafrø": [19.95, 300, 453.0, 33.0, 4.0, 18.0],
+  "sesamfrø": [12.95, 150, 657.0, 57.0, 4.6, 27.0],
+  "hakkede tomater": [6.37, 400, 24.0, 0.5, 4.1, 1.0],
+  "flåede tomater": [6.37, 400, 22.0, 0.5, 3.8, 1.2],
+  "passata": [8.69, 500, 31.0, 0.5, 4.5, 1.5],
+  "tomatpuré": [12.95, 200, 84.0, 0.5, 15.0, 3.9],
+  "tomatsauce": [19.95, 400, 66.0, 3.3, 6.7, 1.9],
+  "pizzasauce": [9.61, 280, 61.0, 3.3, 5.1, 1.4],
+  "kokosmælk": [8.95, 400, 185.0, 18.0, 3.8, 1.3],
+  "pesto": [7.16, 130, 465.0, 46.0, 7.3, 4.5],
+  "bouillon": [5.5, 100, 272.0, 20.0, 19.0, 3.7],
+  "soja": [10.5, 250, 38.0, 0.5, 6.4, 3.1],
+  "østerssauce": [16.5, 150, 93.0, 0.5, 22.0, 1.2],
+  "fiskesauce": [16.95, 150, 75.0, 0.5, 5.7, 13.0],
+  "hoisin": [5, 40, 227.0, 1.6, 51.0, 1.7],
+  "karrypasta": [11.91, 110, 222.0, 18.0, 10.0, 2.2],
+  "sød chilisauce": [16.95, 500, 194.0, 0.5, 47.0, 0.5],
+  "sriracha": [null, null, 93, 1, 19, 2],
+  "ketchup": [8.8, 520, 105.0, 0.5, 23.0, 1.3],
+  "sennep": [12.95, 370, 149.0, 12.0, 3.2, 7.2],
+  "mayonnaise": [12.12, 400, 598.0, 66.0, 0.5, 0.7],
+  "salsa": [10.95, 315, 53.0, 0.5, 11.0, 1.0],
+  "tahin": [24.95, 300, 691.0, 65.0, 5.0, 20.0],
+  "honning": [null, null, 304, 0, 82, 0.3],
+  "oliven": [12.16, 140, 134.0, 14.0, 0.5, 0.5],
+  "kapers": [7.89, 60, 37.0, 0.6, 4.0, 3.0],
+  "soltørrede tomater": [13.93, 280, 393.0, 39.0, 6.3, 2.9],
+  "rødvin": [null, null, 85, 0, 2.6, 0.1],
+  "hvidvin": [null, null, 82, 0, 2.6, 0.1],
+  "olivenolie": [49.95, 750, 828.0, 92.0, 0.5, 0.5],
+  "rapsolie": [19.09, 1000, 828.0, 92.0, 0.5, 0.5],
+  "wokgrøntsager": [13.95, 450, 31.0, 0.5, 4.6, 1.3],
+  "ærter": [10.36, 600, 75.0, 0.7, 8.5, 6.0],
+  "frossen spinat": [9.95, 750, 19.0, 0.6, 0.5, 2.2],
+  "frossen broccoli": [13.95, 400, 28.0, 0.5, 1.9, 2.8],
+  "frosne bær": [16.95, 200, 46.0, 0.5, 7.7, 1.2],
+  "pommes frites": [9.95, 1000, 127.0, 5.1, 18.0, 1.6],
+  "frosne grøntsager": [12.95, 500, 39.0, 0.5, 6.0, 1.9],
+  "blomkålsris": [13.95, 350, 28.0, 0.5, 3.7, 2.0],
+  "tacokrydderi": [5.25, 40, 313.0, 4.5, 59.0, 6.2],
+  "oregano": [5.95, 25, 265, 4, 69, 9],
+  "timian": [7.4, 30, 276, 7, 64, 9],
+  "paprika": [9.67, 45, 282, 13, 54, 14],
+  "røget paprika": [15, 37, 349.0, 17.0, 13.0, 15.0],
+  "spidskommen": [21.39, 33, 428.0, 22.0, 34.0, 18.0],
+  "karry": [5.95, 90, 325, 14, 56, 14],
+  "garam masala": [null, null, 379, 15, 45, 15],
+  "gurkemeje": [9.67, 40, 312, 3, 67, 10],
+  "kanel": [7.95, 70, 247, 1, 81, 4],
+  "chiliflager": [15, 28, 376.0, 17.0, 29.0, 12.0],
+  "hvidløgspulver": [14.47, 55, 331, 0.7, 73, 17],
+  "laurbærblade": [3.75, 8, 313, 8, 75, 8],
+  "kardemomme": [17.72, 30, 311, 7, 68, 11],
+  "koriander": [14.67, 35, 298, 18, 55, 12],
+  "muskatnød": [10.95, 14, 525, 36, 49, 6],
+  "salt": [null, null, 0, 0, 0, 0],
+  "peber": [8.95, 100, 251, 3, 64, 10],
+};
+for (const [t, [price, pack, kcal, f, c, p]] of Object.entries(REMA_DATA)) {
+  if (price != null) NORMAL_PRICES[t] = price;
+  const cur = ING[t] || {};
+  ING[t] = { ...cur, pack: pack || cur.piece || cur.pack || 100, ...(kcal != null ? { kcal, f, c, p } : {}) };
+}
 const UNITS = ["g", "kg", "ml", "dl", "l", "stk", "fed", "dåse", "spsk", "tsk", "håndfuld"];
 const UNIT_G = { g: 1, kg: 1000, ml: 1, dl: 100, l: 1000, spsk: 15, tsk: 5, håndfuld: 25, knivspids: 1, fed: 5 };
 // Grams of an amount: pieces and cans use the ingredient's piece weight.
@@ -548,13 +819,15 @@ function perPortion(m, term) {
   const a = mealAmounts(m)[term];
   return a ? toGrams(term, a[0], a[1]) / mealServings(m) : null;
 }
-// Protein per portion; null when less than half the ingredients have an amount.
-function mealProtein(m) {
+// Energy, protein, fat and carbs per portion; null when less than half the ingredients have an amount.
+function mealMacros(m) {
   const terms = m.ingredients || [];
   const known = terms.filter(t => mealAmounts(m)[t]);
   if (!terms.length || known.length < terms.length / 2) return null;
-  return Math.round(known.reduce((s, t) => s + perPortion(m, t) * (ING[t]?.p || 0) / 100, 0));
+  const sum = (k) => Math.round(known.reduce((s, t) => s + perPortion(m, t) * (ING[t]?.[k] || 0) / 100, 0));
+  return { kcal: sum("kcal"), p: sum("p"), f: sum("f"), c: sum("c") };
 }
+const mealProtein = (m) => mealMacros(m)?.p ?? null;
 const nice = (x) => x >= 10 ? Math.round(x) : Math.round(x * 2) / 2;
 // "1.250 g" → "1,3 kg", "0.5 stk" → "½ stk".
 function fmtAmount(q, u) {
@@ -668,9 +941,9 @@ function planWeek(pool, offersByTerm, stores, count, { staples = [], rejected = 
       });
       const packs = (i) => i.per ? packsFor(i.term, i.per * portions) : 1;
       const saving = items.reduce((s, i) => s + (i.offer ? packs(i) * Math.max(0, i.normal - i.offer.price) : 0) + (i.fresh ? i.normal + 10 : 0), 0);
-      const prot = mealProtein(m);
+      const macros = mealMacros(m), prot = macros?.p ?? null;
       const taste = Math.max(-40, Math.min(30, 8 * (m.up || 0) - 15 * (m.down || 0)));
-      return { mealId: m.id, name: m.name, url: m.url || null, fav: !!m.fav, protein: prot, portions, items,
+      return { mealId: m.id, name: m.name, url: m.url || null, fav: !!m.fav, protein: prot, macros, portions, items,
         value: saving + (m.fav ? 20 : 0) + taste + (protein && prot ? Math.max(0, prot - 25) : 0) };
     }).sort((x, y) => y.value - x.value);
     // Variety: no two meals built on the same main ingredient (the first one listed, e.g. "laks").
@@ -2409,6 +2682,7 @@ function App() {
     <span className="num" style=${{minWidth:22, textAlign:"center", fontWeight:600}}>${value}</span>
     <button className="icon-btn" aria-label=${`${label}: flere`} disabled=${value >= max} onClick=${()=>onSet(value + 1)}>+</button>
   </div>`;
+  const macroLine = (mc) => mc && mc.kcal ? html`<div className="small muted" style=${{marginTop:2}}>ca. ${mc.kcal} kcal · ${mc.p} g protein · ${mc.f} g fedt · ${mc.c} g kulhydrat pr. portion</div>` : null;
   const proteinChip = (p) => p == null ? null : html` <span className=${"chip " + (p >= 30 ? "info" : "")} style=${{fontSize:11, padding:"1px 7px", ...(p >= 30 ? {} : {border:"1px solid var(--border)"})}}>${p >= 30 ? "Proteinrig · " : ""}${p} g protein</span>`;
   const amountOf = (it, portions) => it.amt ? fmtAmount(it.amt[0] * portions, it.amt[1]) : it.per ? fmtAmount(it.per * portions, "g") : "";
   const qtyText = (b) => `${b.packs} ${b.packs === 1 ? "pakke" : "pakker"}${b.u && b.q ? ` · ${fmtAmount(b.q, b.u)}` : b.g ? ` · ca. ${fmtAmount(b.g, "g")}` : ""}`;
@@ -2503,6 +2777,7 @@ function App() {
             <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}${st === "now" && !planEnded ? html`<div><span className="chip info" style=${{fontSize:11, padding:"1px 8px", marginTop:4, display:"inline-block"}}>I dag</span></div>` : null}</div>
             <div className="main">
               <div className="title" style=${{whiteSpace:"normal"}}>${m.done ? "✓ " : m.fav ? "♥ " : ""}${m.name}${proteinChip(m.protein)}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
+              ${macroLine(m.macros)}
               <div className="small muted" style=${{marginTop:2}}>${m.carried ? "Fra sidste plan · " : ""}${m.portions} portioner${m.done ? ` · lavet${m.rate > 0 ? " 👍" : m.rate < 0 ? " 👎" : ""}` : ""}</div>
               ${lastNote && html`<div className="small" style=${{marginTop:4}}>📝 Næste gang: ${lastNote.text}</div>`}
               <div style=${{display:"flex", flexWrap:"wrap", gap:4, marginTop:6}}>${m.items.map(it => chip(it, m.portions))}</div>
@@ -2617,7 +2892,10 @@ function App() {
       const setAmt = (t, q, u) => update(m, { servings: base, amounts: {...am, [t]: [q / k, u]} });
       return html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
         ${stepper("Portioner", view, 1, 16, v => setViewServings({...viewServings, [m.name]: v}))}
-        ${prot != null && html`<div className="small">ca. <b>${prot} g protein</b> pr. portion</div>`}
+        ${(() => { const mc = mealMacros(m); return mc && html`<div className="macro-grid">
+          <div><b>${mc.kcal}</b><span>kcal</span></div><div><b>${mc.p} g</b><span>protein</span></div><div><b>${mc.f} g</b><span>fedt</span></div><div><b>${mc.c} g</b><span>kulhydrat</span></div>
+        </div>`; })()}
+        ${prot != null && html`<div className="small faint">Pr. portion. Næringsindhold fra REMA 1000's varedeklarationer, grønt og krydderier er standardværdier.</div>`}
         <div className="stack" style=${{gap:6}}>${m.ingredients.map(t => html`<div key=${t} style=${{display:"flex", alignItems:"center", gap:6}}>
           <span className="small" style=${{flex:1, minWidth:0}}>${t}</span>
           <input key=${t + view + (am[t] || []).join()} className="input sm" style=${{width:72, textAlign:"right"}} inputMode="decimal" defaultValue=${am[t] ? String(nice(am[t][0] * k)).replace(".", ",") : ""} placeholder="?" aria-label=${`Mængde ${t}`}
@@ -2653,14 +2931,17 @@ function App() {
                   onClick=${()=>{ if (m.ingredients.length > 1) update(m, { ingredients: m.ingredients.filter(x => x !== t) }); }}>${t}${m.ingredients.length > 1 ? " ✕" : ""}</button>`)}
                 <button className="chip info" aria-expanded=${ingFor === m.name} onClick=${()=>{ setIngFor(ingFor === m.name ? null : m.name); setIngSearch(""); }}>${ingFor === m.name ? "Færdig" : "+ Ingrediens"}</button>
               </div>
-              ${ingFor === m.name && IngredientPicker(m)}
-              ${openRecipe === m.name && RecipeView(m)}`}
+`}
         </div>
         <div className="end" style=${{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
           ${!m.skip && html`<button className="link-btn small" aria-expanded=${openRecipe === m.name} onClick=${()=>setOpenRecipe(openRecipe === m.name ? null : m.name)}>${openRecipe === m.name ? "Luk" : "Mængder"}</button>`}
           <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
           ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop(s => ({...s, meals: (s.meals || []).filter(x => x.id !== m.id)})); showUndo(`${m.name} er slettet`, () => setShop(s => ({...s, meals: prev}))); }}>Slet</button>`}
         </div>
+        ${!m.skip && (ingFor === m.name || openRecipe === m.name) && html`<div style=${{flexBasis:"100%", minWidth:0}}>
+          ${ingFor === m.name && IngredientPicker(m)}
+          ${openRecipe === m.name && RecipeView(m)}
+        </div>`}
       </div>`)}</div>
       <div className="section">
         <div className="section-head"><h2>Tilføj din egen ret</h2></div>
