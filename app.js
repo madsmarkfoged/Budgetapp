@@ -1289,39 +1289,117 @@ function App() {
   const StartPage = () => {
     const ym = currentBudgetMonth(), st = monthStats(ym), left = totalBudget - st.exp, pay = nextPayday();
     const go = (pg, sb = null) => { setPage(pg); setSub(sb); scrollToTop(); };
-    const today = new Date(), dateText = `${WEEKDAYS[today.getDay()]} ${today.getDate()}. ${MONTHS_DA[today.getMonth()]}`;
-    const todayMeal = shop.plan?.meals?.find((m, i) => mealState(i) === "now" && !m.done);
-    const owed = sharedPeople.map(w => [w, owedBy(w)]).filter(([, v]) => Math.abs(v) >= 1);
+    const now = new Date(), today = isoDate(now), tomorrow = addDays(today, 1);
+    const hour = now.getHours();
+    const dateText = `${WEEKDAYS[now.getDay()]} ${now.getDate()}. ${MONTHS_DA[now.getMonth()]}`;
+    // Budget month runs from the last payday to the next; the tempo mark shows how much "should" be spent by now.
+    const prevPay = paydayIn(pay.date.getFullYear(), pay.date.getMonth() - 1);
+    const monthDays = Math.max(1, Math.round((pay.date - prevPay) / 86400e3));
+    const elapsed = Math.min(1, Math.max(0, (monthDays - pay.days) / monthDays));
+    const used = totalBudget > 0 ? Math.min(1, st.exp / totalBudget) : 0;
+    const perDay = left / Math.max(1, pay.days);
+    const onTrack = used <= elapsed + 0.03;
     const foodLeft = (+budgets["Mad & dagligvarer"] || 0) - (st.byCat["Mad & dagligvarer"] || 0);
-    const tile = (icon, color, title, sub, onClick, wide = false) => html`<button className=${"start-tile" + (wide ? " wide" : "")} onClick=${onClick}>
-      <div className="si" style=${{background: color + "33", color: tint(color, 0.45)}}><${Icon} name=${icon} /></div>
-      <div style=${{minWidth:0, flex: wide ? 1 : "none"}}><div className="st">${title}</div><div className="ss">${sub}</div></div>
-    </button>`;
-    return html`<div>
-      <div className="start-head">
-        <div className="small muted">${dateText}</div>
-        <div style=${{marginTop:6, fontSize:15}}>${left >= 0 ? html`Du har <b className="pos">${fmt(left)}</b> tilbage at bruge` : html`Du er <b className="neg">${fmt(-left)}</b> over budget`} – løn om ${pay.days === 0 ? "i dag" : pay.days === 1 ? "1 dag" : `${pay.days} dage`}.</div>
+    const owed = sharedPeople.map(w => [w, owedBy(w)]).filter(([, v]) => Math.abs(v) >= 1);
+    const fresh = holdings.filter(h => h.dayPct != null && h.dayAt >= addDays(today, -3));
+    const dayKr = fresh.reduce((s, h) => { const v = holdingValue(h); return s + v - v / (1 + h.dayPct / 100); }, 0);
+
+    // Today: calendar, dinner and training in one list.
+    const todayMeal = shop.plan?.meals?.find((m, i) => mealState(i) === "now" && !m.done);
+    const away = awayFor(today);
+    const session = sessionFor(training, today), trained = training.log?.[today];
+    const evs = (calCache?.events || []).filter(e => e.end > today && e.start < addDays(today, 2));
+    const agenda = [];
+    for (const e of evs) agenda.push({ when: e.start.slice(0, 10) <= today ? "I dag" : "I morgen", time: e.allDay ? "" : e.start.slice(11, 16), title: e.title, sort: (e.start.slice(0, 10) <= today ? "0" : "2") + (e.allDay ? "00:00" : e.start.slice(11, 16)) });
+    const todayList = agenda.filter(a => a.when === "I dag"), tomorrowList = agenda.filter(a => a.when === "I morgen");
+
+    // Coming money events in the next 10 days: payday, rent and expected subscription charges.
+    const upcoming = [];
+    const within = (d) => d >= today && d <= addDays(today, 10);
+    if (within(isoDate(pay.date))) upcoming.push({ d: isoDate(pay.date), icon: "coins", color: "#1D9E75", title: "Løn og SU", amount: null });
+    const rentDay = monthEnd(today.slice(0, 7));
+    if (rent?.amount && within(rentDay)) upcoming.push({ d: rentDay, icon: "home", color: "#378ADD", title: "Husleje", amount: -rent.amount });
+    for (const s of subscriptions) {
+      const [y, m, d] = s.last.split("-").map(Number);
+      let next = isoDate(new Date(y, m, Math.min(d, 28)));
+      if (next < today) next = isoDate(new Date(y, m + 1, Math.min(d, 28)));
+      if (within(next)) upcoming.push({ d: next, icon: "repeat", color: "#534AB7", title: s.name, amount: -s.net });
+    }
+    upcoming.sort((a, b) => a.d.localeCompare(b.d));
+    const dayLabel = (d) => d === today ? "I dag" : d === tomorrow ? "I morgen" : `${WEEKDAYS[new Date(d + "T12:00").getDay()].slice(0, 3)} ${+d.slice(8)}/${+d.slice(5, 7)}`;
+
+    // Things that need a tap.
+    const todo = [];
+    if (syncChoice) todo.push({ icon: "refresh", text: "Der er data fra en anden enhed – vælg hvilke", on: () => go("home") });
+    if (ebSession?.status && ebSession.status !== "AUTHORIZED") todo.push({ icon: "bank", text: "Adgangen til banken skal fornyes", on: startBankLink });
+    if (saxoNeedsLogin && store.json(BRIDGE_KEY)) todo.push({ icon: "trend", text: "Log ind på Saxo for at opdatere depotet", on: startSaxoLogin });
+    if (planEnded) todo.push({ icon: "food", text: "Madplanen er slut – lav en ny", on: () => { go("food"); setFoodTab("plan"); } });
+    else if (foodBadge) todo.push({ icon: "cart", text: "Nye tilbudsaviser", on: () => { go("food"); setFoodTab("plan"); } });
+    for (const [w, v] of owed) if (v > 0) todo.push({ icon: "arrows", text: `${w} skylder dig ${fmt(v)}`, on: () => go("more", "shared") });
+
+    const row = (icon, color, body, onClick, end = null, key) => html`<button key=${key} className="dash-row" onClick=${onClick}>
+      <div className="sq sm" style=${{background: color + "2e", color: tint(color, 0.45)}}><${Icon} name=${icon} /></div>
+      <div className="grow">${body}</div>${end}</button>`;
+    const shortcut = (icon, color, label, onClick) => html`<button key=${label} className="dash-short" onClick=${onClick}>
+      <div className="si" style=${{background: color + "2e", color: tint(color, 0.45)}}><${Icon} name=${icon} /></div><span>${label}</span></button>`;
+
+    return html`<div className="dash">
+      <div className="small muted" style=${{padding:"2px 2px 10px"}}>${dateText}</div>
+
+      <button className="hero dash-hero" onClick=${()=>go("budget")}>
+        <div className="label">Tilbage at bruge</div>
+        <div className="big"><${CountUp} value=${Math.round(left)} /></div>
+        <div className="dash-bar"><div className="fill" style=${{width: `${used * 100}%`}}></div><div className="mark" style=${{left: `${elapsed * 100}%`}}></div></div>
+        <div className="hero-row">
+          <span className=${"chip " + (onTrack ? "up" : "down")}>${onTrack ? "På sporet" : "Over tempo"}</span>
+          <span className="hm">${left > 0 ? `${fmt(perDay)} pr. dag · ` : ""}løn ${pay.days === 0 ? "i dag" : pay.days === 1 ? "i morgen" : `om ${pay.days} dage`}</span>
+        </div>
+      </button>
+
+      <div className="dash-stats">
+        <button onClick=${()=>go("food")}><span className="k">Mad</span><span className=${"v " + (foodLeft < 0 ? "neg" : "")}>${fmt(foodLeft)}</span><span className="s">tilbage</span></button>
+        <button onClick=${()=>go("invest")}><span className="k">Depot</span><span className="v">${fmtShort(invValue)}</span><span className=${"s " + (fresh.length ? (dayKr >= 0 ? "pos" : "neg") : "")}>${fresh.length ? `${dayKr >= 0 ? "+" : ""}${fmtShort(dayKr)} i dag` : "kr."}</span></button>
+        <button onClick=${()=>go("home")}><span className="k">Formue</span><span className="v">${fmtShort(netWorth)}</span><span className="s">kr.</span></button>
       </div>
-      ${syncChoice && html`<div className="tip tap" style=${{marginBottom:12}} onClick=${()=>go("home")}><div className="sq sm" style=${{background:"var(--accent-bg)", color:"var(--accent)"}}><${Icon} name="refresh" /></div><div>Der er data fra en anden enhed. Tryk for at vælge, hvilke der skal bruges.</div></div>`}
-      ${(() => { const away = awayFor(isoDate(new Date()));
-        return (todayMeal || away.away) && html`<button className="tip tap" style=${{width:"100%", textAlign:"left", font:"inherit", color:"inherit", marginBottom:12}} onClick=${()=>{ go("food"); setFoodTab("plan"); }}>
-        <div className="sq sm" style=${{background:"var(--pos-bg)", color:"var(--pos)"}}><${Icon} name="food" /></div><div>${away.away ? html`I dag laver du ikke mad${away.reason && away.reason !== "markeret" ? ` (${away.reason})` : ""}.` : html`I dag: <b>${todayMeal.name}</b>`}</div></button>`; })()}
-      ${(() => { const t = isoDate(new Date()), tm = addDays(t, 1), evs = (calCache?.events || []).filter(e => e.end > t && e.start < addDays(t, 2)).slice(0, 3);
-        return evs.length > 0 && html`<div className="card" style=${{marginBottom:12, padding:"10px 14px"}}>${evs.map((e, i) => html`<div key=${i} className="small" style=${{display:"flex", gap:10, padding:"3px 0"}}>
-          <span className="muted" style=${{width:78, flexShrink:0}}>${e.start.slice(0, 10) <= t ? "I dag" : "I morgen"}${e.allDay ? "" : " " + e.start.slice(11, 16)}</span><span style=${{minWidth:0}}>${e.title}</span></div>`)}</div>`; })()}
-      <div className="start-grid">
-        ${tile("wallet", "#378ADD", "Overblik", `Formue ${fmt(netWorth)}`, () => go("home"))}
-        ${tile("donut", "#639922", "Budget", `${fmt(st.exp)} brugt af ${fmt(totalBudget)}`, () => go("budget"))}
-        ${tile("food", "#D85A30", "Mad", foodBadge ? (planEnded ? "Madplanen er slut" : "Nye tilbudsaviser") : `${fmt(foodLeft)} tilbage til mad`, () => go("food"))}
-        ${tile("list", "#7F77DD", "Poster", transactions[0] ? `${prettyName(transactions.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||""))[0].description)}` : "Ingen poster endnu", () => go("tx"))}
-        ${tile("trend", "#1D9E75", "Investeringer", invValue > 0 ? `${fmt(invValue)}` : "Forbind Saxo", () => go("invest"))}
-        ${tile("plane", "#EF9F27", "Rejsepulje", `${rejse.trips.length} ${rejse.trips.length === 1 ? "rejse" : "rejser"}`, () => go("more", "trips"))}
-        ${tile("repeat", "#534AB7", "Abonnementer", `${fmt(subsMonthly)} om måneden`, () => go("more", "subs"))}
-        ${tile("arrows", "#D4537E", "Delte udgifter", owed.length ? owed.map(([w, v]) => `${w} ${v > 0 ? "skylder" : "får"} ${fmt(Math.abs(v))}`).join(" · ") : "Ingen åbne udlæg", () => go("more", "shared"))}
-        ${tile("donut", "#185FA5", "Månedsrapport", monthName(prevMonth(ym)), () => { setReportMonth(null); go("more", "report"); })}
-        ${tile("school", "#3B8A6E", "SU-fribeløb", "Hvor meget du må tjene", () => go("more", "su"))}
-        ${tile("heart", "#1D9E75", "Træning", (() => { const s = sessionFor(training, isoDate(new Date())), w = weekProgress(training); return `${training.log?.[isoDate(new Date())] ? "✓ " : ""}${s ? `I dag: ${s}` : "Hviledag"} · ${w.done}/${w.target}`; })(), () => go("more", "training"))}
-        ${tile("dots", "#888780", "Mere", "Bank, data, udseende og lås", () => go("more"), true)}
+
+      ${todo.length > 0 && html`<div className="section"><div className="list">${todo.map((t, i) => row(t.icon, "#EF9F27", t.text, t.on, html`<${Icon} name="chevron" />`, "t" + i))}</div></div>`}
+
+      <div className="section">
+        <div className="section-head"><h2>I dag</h2></div>
+        <div className="list">
+          ${row("food", "#D85A30", away.away
+              ? html`<div className="title">Du laver ikke mad</div><div className="sub">${away.reason && away.reason !== "markeret" ? away.reason : "Markeret i madplanen"}</div>`
+              : todayMeal ? html`<div className="title">${todayMeal.name}</div><div className="sub">Aftensmad · tryk for madplanen</div>`
+              : html`<div className="title">Ingen ret planlagt</div><div className="sub">Lav en madplan</div>`,
+            () => { go("food"); setFoodTab("plan"); }, null, "meal")}
+          ${row("heart", "#1D9E75", html`<div className="title">${session ? session : "Hviledag"}</div><div className="sub">Træning · ${weekProgress(training).done}/${weekProgress(training).target} denne uge</div>`,
+            () => go("more", "training"),
+            session ? html`<span className=${"chip " + (trained ? "up" : "")} onClick=${e=>{ e.stopPropagation(); setTraining(t => { const log = { ...(t.log || {}) }; if (log[today]) delete log[today]; else log[today] = session; return { log }; }); }}>${trained ? "✓ Trænet" : "Marker"}</span>` : null, "gym")}
+          ${todayList.map((a, i) => row("sun", "#378ADD", html`<div className="title">${a.title}</div><div className="sub">${a.time || "Hele dagen"}</div>`, () => go("more", "calendar"), null, "e" + i))}
+        </div>
+        ${tomorrowList.length > 0 && html`<div className="small muted" style=${{margin:"8px 4px 0"}}>I morgen: ${tomorrowList.slice(0, 3).map(a => `${a.time ? a.time + " " : ""}${a.title}`).join(" · ")}</div>`}
+      </div>
+
+      ${upcoming.length > 0 && html`<div className="section">
+        <div className="section-head"><h2>Næste 10 dage</h2></div>
+        <div className="list">${upcoming.slice(0, 6).map((u, i) => row(u.icon, u.color,
+          html`<div className="title">${u.title}</div><div className="sub">${dayLabel(u.d)}</div>`,
+          () => u.icon === "repeat" ? go("more", "subs") : go("budget"),
+          u.amount != null ? html`<div className="num">${fmt(u.amount)}</div>` : null, "u" + i))}</div>
+      </div>`}
+
+      <div className="section">
+        <div className="section-head"><h2>Genveje</h2></div>
+        <div className="dash-shorts">
+          ${shortcut("list", "#7F77DD", "Poster", () => go("tx"))}
+          ${shortcut("donut", "#639922", "Budget", () => go("budget"))}
+          ${shortcut("plane", "#EF9F27", "Rejser", () => go("more", "trips"))}
+          ${shortcut("repeat", "#534AB7", "Abonnem.", () => go("more", "subs"))}
+          ${shortcut("arrows", "#D4537E", "Delte", () => go("more", "shared"))}
+          ${shortcut("donut", "#185FA5", "Rapport", () => { setReportMonth(null); go("more", "report"); })}
+          ${shortcut("school", "#3B8A6E", "SU", () => go("more", "su"))}
+          ${shortcut("dots", "#888780", "Mere", () => go("more"))}
+        </div>
       </div>
     </div>`;
   };
