@@ -346,12 +346,19 @@ const MEAL_TEMPLATES = [
   ["Laksepasta med citron og spinat", ["laks", "pasta", "spinat", "skyr", "citron"]],
 ];
 // Ingredients to pick from under "Retter", grouped like a shop.
+// Ingredients to pick from, grouped the way a Danish supermarket is laid out (also the shopping-list order).
+// No chain publishes an open product catalogue, so this is a hand-made list of common raw ingredients.
 const INGREDIENT_GROUPS = [
-  ["Kød og fisk", ["kylling", "hakket oksekød", "hakket svinekød", "hakket kylling", "kalkun", "bacon", "skinke", "salsiccia", "laks", "tun", "rejer"]],
-  ["Grønt", ["løg", "rødløg", "hvidløg", "gulerødder", "bladselleri", "squash", "peberfrugt", "champignon", "spinat", "broccoli", "cherrytomater", "agurk", "salat", "kartofler", "søde kartofler", "majs", "ærter", "chili", "ingefær", "citron", "avocado", "basilikum"]],
-  ["Mejeri og æg", ["ost", "parmesan", "mozzarella", "fløde", "creme fraiche", "skyr", "græsk yoghurt", "yoghurt", "hytteost", "smør", "mælk", "æg"]],
-  ["Pasta, ris og brød", ["pasta", "spaghetti", "lasagneplader", "ris", "nudler", "couscous", "bulgur", "tortilla", "pitabrød", "burgerboller", "pizzadej"]],
-  ["Dåser, saucer og krydderier", ["hakkede tomater", "tomatpuré", "passata", "tomatsauce", "kokosmælk", "kidneybønner", "kikærter", "røde linser", "bouillon", "pesto", "rødvin", "soja", "karrypasta", "tacokrydderi", "oregano"]],
+  ["Grønt", ["løg", "rødløg", "skalotteløg", "forårsløg", "porre", "hvidløg", "gulerødder", "kartofler", "søde kartofler", "pastinak", "rødbeder", "knoldselleri", "bladselleri", "squash", "aubergine", "peberfrugt", "champignon", "svampe", "spinat", "grønkål", "broccoli", "blomkål", "rosenkål", "spidskål", "hvidkål", "rødkål", "grønne bønner", "sukkerærter", "majs", "agurk", "tomater", "cherrytomater", "salat", "rucola", "avocado", "chili", "ingefær", "citron", "lime", "persille", "basilikum", "frisk koriander", "mynte", "dild", "purløg"]],
+  ["Frugt", ["bananer", "æbler", "pærer", "appelsiner", "blåbær", "jordbær", "hindbær", "mango", "ananas", "druer", "rosiner", "dadler"]],
+  ["Brød, pasta og ris", ["pasta", "spaghetti", "penne", "tagliatelle", "lasagneplader", "nudler", "ris", "basmatiris", "couscous", "bulgur", "quinoa", "havregryn", "müsli", "tortilla", "pitabrød", "naanbrød", "burgerboller", "pizzadej", "rugbrød", "toastbrød", "brød"]],
+  ["Kød", ["kylling", "kyllingelår", "hakket kylling", "kalkun", "hakket oksekød", "hakket svinekød", "hakket kalv og flæsk", "oksebøf", "oksekød i tern", "svinemørbrad", "nakkekoteletter", "flæsk", "bacon", "skinke", "pølser", "chorizo", "salsiccia", "kyllingepålæg"]],
+  ["Fisk", ["laks", "torsk", "tun", "rejer", "makrel", "fiskefrikadeller"]],
+  ["Mejeri og æg", ["æg", "mælk", "smør", "fløde", "madlavningsfløde", "creme fraiche", "ost", "revet ost", "mozzarella", "parmesan", "feta", "halloumi", "hytteost", "flødeost", "skyr", "græsk yoghurt", "yoghurt", "kvark", "proteinbudding"]],
+  ["Bønner, linser og nødder", ["røde linser", "grønne linser", "kikærter", "kidneybønner", "sorte bønner", "hvide bønner", "edamame", "nødder", "mandler", "peanuts", "peanutbutter", "solsikkekerner", "chiafrø"]],
+  ["Dåser og saucer", ["hakkede tomater", "passata", "tomatpuré", "tomatsauce", "kokosmælk", "pesto", "bouillon", "soja", "fiskesauce", "karrypasta", "sød chilisauce", "sriracha", "ketchup", "sennep", "mayonnaise", "salsa", "tahin", "honning", "rødvin", "hvidvin"]],
+  ["Frost", ["wokgrøntsager", "ærter", "frossen spinat", "frosne bær", "pommes frites", "frosne grøntsager"]],
+  ["Krydderier", ["tacokrydderi", "oregano", "timian", "paprika", "spidskommen", "karry", "garam masala", "gurkemeje", "kanel", "chiliflager", "hvidløgspulver"]],
 ];
 // What people usually add to the simple starter versions.
 const MEAL_EXTRAS = {
@@ -492,6 +499,38 @@ const ING = {
   "bouillon": { pack: 3000, p: 0 }, "rødvin": { pack: 750, p: 0 }, "soja": { pack: 150, p: 8 },
   "karrypasta": { pack: 100, p: 2 }, "tacokrydderi": { pack: 30, p: 0 }, "oregano": { pack: 10, p: 0 }, "mynte": { pack: 30, p: 3 },
 };
+// Rough price (kr.), pack size (g), protein (g/100 g) and piece weight for the rest of the catalogue.
+const EXTRA_ING = {
+  "skalotteløg": [15, 250, 1, 30], "forårsløg": [10, 100, 2, 15], "porre": [8, 300, 1, 300], "pastinak": [15, 500, 1, 150],
+  "rødbeder": [12, 500, 2, 150], "knoldselleri": [15, 700, 1, 700], "aubergine": [12, 300, 1, 300], "svampe": [25, 250, 3],
+  "grønkål": [20, 250, 4], "blomkål": [20, 700, 2, 700], "rosenkål": [20, 500, 3], "spidskål": [15, 800, 1, 800],
+  "hvidkål": [12, 1000, 1, 1000], "rødkål": [12, 1000, 1, 1000], "grønne bønner": [20, 400, 2], "sukkerærter": [20, 150, 3],
+  "tomater": [15, 500, 1, 100], "rucola": [15, 65, 3], "lime": [5, 70, 1, 70], "persille": [12, 30, 3], "frisk koriander": [12, 30, 3],
+  "mynte": [15, 30, 3], "dild": [12, 30, 3], "purløg": [12, 30, 3],
+  "bananer": [15, 1000, 1, 120], "æbler": [20, 1000, 0, 150], "pærer": [20, 1000, 0, 170], "appelsiner": [20, 1000, 1, 200],
+  "blåbær": [25, 125, 1], "jordbær": [25, 400, 1], "hindbær": [25, 125, 1], "mango": [15, 400, 1, 400], "ananas": [20, 1000, 0, 1000],
+  "druer": [20, 500, 1], "rosiner": [15, 250, 3], "dadler": [25, 250, 2],
+  "penne": [12, 500, 12], "tagliatelle": [20, 500, 12], "basmatiris": [25, 1000, 7], "quinoa": [30, 500, 14], "havregryn": [12, 1000, 13],
+  "müsli": [30, 750, 10], "naanbrød": [20, 260, 9, 130], "rugbrød": [20, 1000, 6, 50], "toastbrød": [15, 600, 9, 25], "brød": [25, 700, 9, 40],
+  "kyllingelår": [40, 1000, 18, 120], "hakket kalv og flæsk": [40, 500, 17], "oksebøf": [60, 300, 22, 150], "oksekød i tern": [70, 500, 21],
+  "svinemørbrad": [60, 500, 21], "nakkekoteletter": [45, 700, 18, 175], "flæsk": [35, 500, 14], "pølser": [30, 400, 12, 80],
+  "chorizo": [25, 150, 24], "kyllingepålæg": [20, 100, 20],
+  "torsk": [60, 400, 18], "makrel": [12, 125, 15], "fiskefrikadeller": [30, 400, 10, 50],
+  "madlavningsfløde": [12, 250, 3], "revet ost": [25, 175, 25], "feta": [20, 200, 14], "halloumi": [30, 225, 21], "flødeost": [15, 200, 6],
+  "kvark": [15, 500, 11], "proteinbudding": [12, 200, 10, 200],
+  "grønne linser": [20, 500, 24], "sorte bønner": [10, 400, 8], "hvide bønner": [10, 400, 7], "edamame": [25, 400, 11],
+  "nødder": [30, 200, 18], "mandler": [30, 200, 21], "peanuts": [20, 300, 25], "peanutbutter": [30, 350, 25],
+  "solsikkekerner": [15, 250, 21], "chiafrø": [25, 200, 17],
+  "fiskesauce": [20, 200, 5], "sød chilisauce": [20, 250, 0], "sriracha": [25, 435, 1], "ketchup": [20, 500, 1], "sennep": [15, 400, 6],
+  "mayonnaise": [20, 400, 1], "salsa": [20, 300, 1], "tahin": [30, 300, 17], "honning": [30, 450, 0], "hvidvin": [50, 750, 0],
+  "frossen spinat": [15, 450, 3], "frosne bær": [30, 500, 1], "pommes frites": [20, 1000, 3], "frosne grøntsager": [20, 600, 2],
+  "timian": [15, 10, 0], "paprika": [15, 30, 0], "spidskommen": [15, 30, 0], "karry": [15, 30, 0], "garam masala": [20, 30, 0],
+  "gurkemeje": [15, 30, 0], "kanel": [15, 30, 0], "chiliflager": [15, 30, 0], "hvidløgspulver": [15, 30, 0],
+};
+for (const [t, [price, pack, p, piece]] of Object.entries(EXTRA_ING)) {
+  NORMAL_PRICES[t] ??= price;
+  ING[t] ??= piece ? { pack, piece, p } : { pack, p };
+}
 const UNITS = ["g", "kg", "ml", "dl", "l", "stk", "fed", "dåse", "spsk", "tsk", "håndfuld"];
 const UNIT_G = { g: 1, kg: 1000, ml: 1, dl: 100, l: 1000, spsk: 15, tsk: 5, håndfuld: 25, knivspids: 1, fed: 5 };
 // Grams of an amount: pieces and cans use the ingredient's piece weight.
@@ -571,11 +610,11 @@ function mealFromRecipe(r, url) {
 // Whether a pantry item covers an ingredient ("græsk yoghurt" covers "yoghurt", "olie" covers "olivenolie").
 const covers = (have, term) => have === term || (have.length >= 4 && term.endsWith(have)) || offerFits(term, have);
 // Shop walk order for the shopping list.
-const AISLES = ["Grønt", "Pasta, ris og brød", "Kød og fisk", "Mejeri og æg", "Dåser, saucer og krydderier", "Andet"];
+const AISLES = [...INGREDIENT_GROUPS.map(([g]) => g), "Andet"];
 const aisleOf = (name) => {
   const n = name.toLowerCase();
   return INGREDIENT_GROUPS.find(([, l]) => l.includes(n))?.[0] || INGREDIENT_GROUPS.find(([, l]) => l.some(t => covers(t, n)))?.[0]
-    || (/kaffe|toilet|brød|bananer/.test(n) ? (/bananer/.test(n) ? "Grønt" : /brød/.test(n) ? "Pasta, ris og brød" : "Andet") : "Andet");
+    || "Andet";
 };
 const packsFor = (term, g) => Math.max(1, Math.ceil(g / (ING[term]?.pack || 500) - 0.1));
 
@@ -971,7 +1010,8 @@ function App() {
   const [offers, setOffers] = useState({}); // itemId -> {loading, error, list}
   const [shopDraft, setShopDraft] = useState("");
   const [foodTab, setFoodTab] = useState("plan");
-  const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "", url: "" });
+  const [mealDraft, setMealDraft] = useState({ name: "", ingredients: "", url: "", items: [] });
+  const [ingGroup, setIngGroup] = useState(null); // open category in the ingredient picker
   const [planBusy, setPlanBusy] = useState(false);
   const [stapleDraft, setStapleDraft] = useState("");
   const [pickMeal, setPickMeal] = useState(null);
@@ -2544,28 +2584,33 @@ function App() {
     const parse = (txt) => txt.split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
     const update = updateMeal;
     const addOwn = () => {
-      const name = mealDraft.name.trim(), ingredients = parse(mealDraft.ingredients);
+      const name = mealDraft.name.trim(), ingredients = mealDraft.items || [];
       if (!name || !ingredients.length) return;
       const url = /^https?:\/\//.test(mealDraft.url.trim()) ? mealDraft.url.trim() : null;
-      setShop(s => ({...s, meals: [...(s.meals || []), { id: uid(), name, ingredients, fav: true, url }]})); setMealDraft({ name: "", ingredients: "", url: "" });
+      setShop(s => ({...s, meals: [...(s.meals || []), { id: uid(), name, ingredients, fav: true, url }]})); setMealDraft({ name: "", ingredients: "", url: "", items: [] }); setIngSearch(""); setIngGroup(null);
     };
-    const IngredientPicker = (m) => {
-      const have = new Set(m.ingredients);
-      const add = (t) => { const v = t.trim().toLowerCase(); if (v && !have.has(v)) update(m, { ingredients: [...m.ingredients, v] }); };
+    // Pick ingredients by category (tabs like the shop's departments), or search across all of them.
+    const Picker = (haveList, onAdd, extras = [], extrasLabel = "") => {
+      const have = new Set(haveList);
+      const add = (t) => { const v = t.trim().toLowerCase(); if (v && !have.has(v)) onAdd(v); };
       const q = ingSearch.trim().toLowerCase();
       const chip = (t) => html`<button key=${t} className="chip info" onClick=${()=>add(t)}>+ ${t}</button>`;
-      const extras = (MEAL_EXTRAS[m.name] || []).filter(t => !have.has(t));
-      const groups = INGREDIENT_GROUPS.map(([g, list]) => [g, list.filter(t => !have.has(t) && (!q || t.includes(q)))]).filter(([, l]) => l.length);
+      const ex = extras.filter(t => !have.has(t));
       const known = INGREDIENT_GROUPS.some(([, l]) => l.includes(q));
+      const hits = q ? INGREDIENT_GROUPS.flatMap(([, l]) => l).filter(t => !have.has(t) && t.includes(q)) : [];
+      const open = INGREDIENT_GROUPS.find(([g]) => g === ingGroup);
       return html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
         <form onSubmit=${e=>{ e.preventDefault(); if (q) { add(q); setIngSearch(""); } }}>
-          <input className="input sm" value=${ingSearch} onChange=${e=>setIngSearch(e.target.value)} placeholder="Søg, eller skriv en ny ingrediens" aria-label="Søg ingrediens" />
+          <input className="input sm" value=${ingSearch} onChange=${e=>setIngSearch(e.target.value)} placeholder="Søg i alle varer" aria-label="Søg ingrediens" />
         </form>
-        ${q && !known && !have.has(q) && html`<div><button className="chip info" onClick=${()=>{ add(q); setIngSearch(""); }}>+ Tilføj "${q}"</button></div>`}
-        ${!q && extras.length > 0 && html`<div><div className="small muted" style=${{marginBottom:5}}>Forslag til ${m.name.toLowerCase()}</div><div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${extras.map(chip)}</div></div>`}
-        ${groups.map(([g, list]) => html`<div key=${g}><div className="small muted" style=${{marginBottom:5}}>${g}</div><div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${list.map(chip)}</div></div>`)}
+        ${q ? html`<div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${hits.map(chip)}${!known && !have.has(q) && html`<button className="chip" style=${{border:"1px dashed var(--border)"}} onClick=${()=>{ add(q); setIngSearch(""); }}>+ Tilføj "${q}"</button>`}</div>` : html`
+          <div className="cat-tabs" role="tablist">${INGREDIENT_GROUPS.map(([g]) => html`<button key=${g} role="tab" aria-selected=${ingGroup === g} className=${ingGroup === g ? "on" : ""} onClick=${e=>{ setIngGroup(ingGroup === g ? null : g); e.currentTarget.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" }); }}>${g}</button>`)}</div>
+          ${open ? html`<div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${open[1].filter(t => !have.has(t)).map(chip)}</div>`
+            : ex.length > 0 ? html`<div><div className="small muted" style=${{marginBottom:5}}>${extrasLabel}</div><div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${ex.map(chip)}</div></div>`
+            : html`<div className="small faint">Vælg en kategori ovenfor.</div>`}`}
       </div>`;
     };
+    const IngredientPicker = (m) => Picker(m.ingredients, (v) => update(m, { ingredients: [...m.ingredients, v] }), MEAL_EXTRAS[m.name] || [], `Forslag til ${m.name.toLowerCase()}`);
     // Amounts, scaled to the number of portions shown; an edited number is stored for the recipe's own servings.
     const RecipeView = (m) => {
       const base = mealServings(m), view = viewServings[m.name] || base, k = view / base, am = mealAmounts(m), prot = mealProtein(m);
@@ -2621,9 +2666,15 @@ function App() {
         <div className="section-head"><h2>Tilføj din egen ret</h2></div>
         <div className="card stack">
           <input className="input" placeholder="Navn, fx Mormors boller i karry" value=${mealDraft.name} onChange=${e=>setMealDraft({...mealDraft, name: e.target.value})} aria-label="Rettens navn" />
-          <input className="input" placeholder="Ingredienser adskilt af komma, fx hakket svinekød, ris, karry" value=${mealDraft.ingredients} onChange=${e=>setMealDraft({...mealDraft, ingredients: e.target.value})} aria-label="Ingredienser" />
+          <div>
+            <div className="small muted" style=${{marginBottom:6}}>Ingredienser ${(mealDraft.items || []).length ? "– tryk for at fjerne. Den første er hovedingrediensen." : ""}</div>
+            <div style=${{display:"flex", flexWrap:"wrap", gap:5}}>${(mealDraft.items || []).length
+              ? mealDraft.items.map(t => html`<button key=${t} className="chip" style=${{border:"1px solid var(--border)"}} aria-label=${`Fjern ${t}`} onClick=${()=>setMealDraft({...mealDraft, items: mealDraft.items.filter(x => x !== t)})}>${t} ✕</button>`)
+              : html`<span className="small faint">Ingen endnu – vælg nedenfor.</span>`}</div>
+            ${ingFor === null && Picker(mealDraft.items || [], (v) => setMealDraft(d => ({...d, items: [...(d.items || []), v]})))}
+          </div>
           <input className="input" type="url" placeholder="Link til opskriften (valgfrit)" value=${mealDraft.url} onChange=${e=>setMealDraft({...mealDraft, url: e.target.value})} aria-label="Link til opskriften" />
-          <button className="btn primary" disabled=${!mealDraft.name.trim() || !parse(mealDraft.ingredients).length} onClick=${addOwn}>Tilføj ret</button>
+          <button className="btn primary" disabled=${!mealDraft.name.trim() || !(mealDraft.items || []).length} onClick=${addOwn}>Tilføj ret</button>
         </div>
       </div>
     </div>`;

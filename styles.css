@@ -335,3 +335,8 @@ select.input { appearance: auto; }
 .fb-week.now .fb-wl { color: var(--accent); font-weight: 600; opacity: 1; }
 .fb-wv { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .fb-week.future .fb-wv { font-weight: 500; opacity: .7; }
+/* Category tabs in the ingredient picker */
+.cat-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.cat-tabs::-webkit-scrollbar { display: none; }
+.cat-tabs button { flex-shrink: 0; border: 1px solid var(--border); background: transparent; color: inherit; font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 999px; cursor: pointer; }
+.cat-tabs button.on { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); font-weight: 600; }
