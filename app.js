@@ -360,6 +360,32 @@ const INGREDIENT_GROUPS = [
   ["Frost", ["wokgrøntsager", "ærter", "frossen spinat", "frossen broccoli", "frosne bær", "pommes frites", "frosne grøntsager", "blomkålsris"]],
   ["Krydderier", ["tacokrydderi", "oregano", "timian", "paprika", "røget paprika", "spidskommen", "karry", "garam masala", "gurkemeje", "kanel", "chiliflager", "hvidløgspulver", "laurbærblade", "kardemomme", "koriander", "muskatnød", "salt", "peber"]],
 ];
+// Valdemarsro dinners to pick from under Retter. Only names and links live here (the repo is public): the
+// ingredients are fetched through the worker when the user adds one, and the method when they open it.
+const VALDEMARSRO = [
+  ["salsiccia-pasta", "Salsiccia Pasta", "Pasta"], ["dhal", "Indisk dhal med raita", "Vegetar"], ["lasagne", "Lasagne", "Pasta"],
+  ["pesto-pasta", "Pesto Pasta", "Pasta"], ["pasta-med-laks-og-spinat", "Pasta med laks og spinat", "Pasta"],
+  ["marry-me-chicken-orzo-med-spinat", "Marry Me Chicken Orzo med spinat", "Kylling"], ["marry-me-chicken", "Marry Me Chicken", "Kylling"],
+  ["pasta-med-moerbrad-i-tomatfloedesauce", "Pasta med mørbrad i tomatflødesauce", "Pasta"], ["nem-koedsauce-med-groentsager", "Nem kødsauce med grøntsager", "Oksekød"],
+  ["one-pot-pasta-ala-cheeseburger", "One pot pasta ala Cheeseburger", "Pasta"], ["texmex-mac-and-cheese", "TexMex Mac and Cheese", "Pasta"],
+  ["bagt-pasta-bolognese", "Bagt pasta bolognese", "Pasta"], ["feta-pasta-med-tomat", "Feta pasta med tomat", "Vegetar"], ["vodka-pasta", "Vodka Pasta", "Pasta"],
+  ["tortellini-i-fad", "Tortellini i fad", "Pasta"], ["italienske-koedboller-i-tomatsauce-i-ovn", "Italienske kødboller i tomatsauce", "Gris"],
+  ["one-pot-pasta", "One pot pasta med chorizo", "Pasta"], ["pastasalat-med-kylling-og-karrydressing", "Pastasalat med kylling og karrydressing", "Kylling"],
+  ["kylling-med-parmesan", "Kylling med parmesan, salvie og tomater", "Kylling"], ["kylling-cremet-sennepssauce", "Kylling i cremet sennepssauce", "Kylling"],
+  ["kylling-i-fad-med-groent", "Kylling i fad med grønt", "Kylling"], ["kyllingefrikadeller", "Kyllingefrikadeller", "Kylling"],
+  ["chicken-caesar-tacos", "Chicken Cæsar Tacos", "Kylling"], ["ramen-med-sproed-kylling", "Ramen med sprød kylling", "Suppe"],
+  ["nudelsuppe-med-kylling-og-groent", "Nudelsuppe med kylling og grønt", "Suppe"], ["kyllingegryde", "Marokkansk kyllingegryde", "Kylling"],
+  ["hoensefrikasse", "Hønsefrikassé", "Kylling"], ["chili-con-carne", "Chili con carne", "Oksekød"],
+  ["kaalpande-med-spidskaal-og-oksekoed", "Kålpande med spidskål og oksekød", "Oksekød"], ["kaalfad-med-hakket-oksekoed", "Kålfad med hakket oksekød", "Oksekød"],
+  ["cheeseburger-tacos", "Cheeseburger Tacos", "Oksekød"], ["mexicansk-suppe-med-oksekoed", "Mexicansk suppe med oksekød", "Suppe"], ["ragu", "Ragu", "Oksekød"],
+  ["koedboller-i-svampesauce", "Kødboller i svampesauce", "Gris"], ["lasagnesuppe", "Lasagnesuppe", "Suppe"], ["millionlinser", "Millionlinser", "Oksekød"],
+  ["svensk-poelseret", "Svensk pølseret", "Gris"], ["chorizosuppe", "Chorizosuppe med kartofler og grønkål", "Suppe"],
+  ["kikaertegryde", "Kikærtegryde med linser og kokosmælk", "Vegetar"], ["marokkansk-linsegryde", "Marokkansk linsegryde", "Vegetar"],
+  ["boennegryde", "Bønnegryde", "Vegetar"], ["halloumi-stroganoff-med-kartoffelmos", "Halloumi Stroganoff med kartoffelmos", "Vegetar"],
+  ["gullashsuppe", "Gullashsuppe", "Suppe"], ["kaalsalat-med-crispy-kylling-og-mangodressing", "Kålsalat med crispy kylling og mangodressing", "Kylling"],
+];
+const VR_URL = (slug) => `https://www.valdemarsro.dk/${slug}/`;
+const VR_TAGS = ["Pasta", "Kylling", "Oksekød", "Gris", "Vegetar", "Suppe"];
 // What people usually add to the simple starter versions.
 const MEAL_EXTRAS = {
   "Spaghetti bolognese": ["gulerødder", "bladselleri", "hvidløg", "tomatpuré", "rødvin", "bouillon", "parmesan", "oregano"],
@@ -802,6 +828,20 @@ for (const [t, [price, pack, kcal, f, c, p]] of Object.entries(REMA_DATA)) {
   const cur = ING[t] || {};
   ING[t] = { ...cur, pack: pack || cur.piece || cur.pack || 100, ...(kcal != null ? { kcal, f, c, p } : {}) };
 }
+// Weight of one piece (g) for things recipes count in pieces ("4 kyllingebryst", "2 løg").
+const PIECE_G = {
+  "kylling": 150, "kyllingebryst": 150, "kyllingeinderfilet": 50, "kyllingelårfilet": 100, "kyllingelår": 250, "kyllingeunderlår": 110,
+  "kyllingevinger": 50, "hel kylling": 1300, "laks": 125, "torsk": 125, "kuller": 125, "mørksej": 125, "rødspætte": 100, "tykstegsbøf": 150,
+  "højrebsbøf": 180, "rib eye": 180, "koteletter": 130, "nakkekoteletter": 150, "skinkeschnitzel": 125, "svinemørbrad": 500, "pølser": 70,
+  "frikadeller": 50, "kødboller": 25, "fiskefrikadeller": 50, "medister": 500, "salsiccia": 100, "andebryst": 300, "porre": 200,
+  "tomater": 100, "kartofler": 100, "små kartofler": 40, "rødbeder": 150, "fennikel": 250, "hokkaido": 1000, "blomkål": 700, "broccoli": 400,
+  "spidskål": 800, "hvidkål": 1000, "rødkål": 1000, "icebergsalat": 400, "pak choi": 150, "majs": 285, "ingefær": 30, "persille": 30,
+  "basilikum": 30, "frisk koriander": 30, "mynte": 30, "dild": 30, "purløg": 30, "rosmarin": 10, "lime": 60, "appelsiner": 200, "kiwi": 75,
+  "æbler": 150, "pærer": 170, "bananer": 120, "mango": 300, "melon": 1000, "ananas": 1000, "granatæble": 250, "brød": 40, "boller": 60,
+  "toastbrød": 25, "rugbrød": 50, "taco shells": 11, "hakkede tomater": 400, "flåede tomater": 400, "kokosmælk": 400, "kidneybønner": 240,
+  "kikærter": 240, "sorte bønner": 240, "hvide bønner": 240, "tun": 130, "mozzarella": 125, "feta": 200, "halloumi": 225, "tofu": 200,
+};
+for (const [t, g] of Object.entries(PIECE_G)) ING[t] = { ...(ING[t] || { pack: g, p: 0 }), piece: g };
 const UNITS = ["g", "kg", "ml", "dl", "l", "stk", "fed", "dåse", "spsk", "tsk", "håndfuld"];
 const UNIT_G = { g: 1, kg: 1000, ml: 1, dl: 100, l: 1000, spsk: 15, tsk: 5, håndfuld: 25, knivspids: 1, fed: 5 };
 // Grams of an amount: pieces and cans use the ingredient's piece weight.
@@ -877,7 +917,8 @@ function mealFromRecipe(r, url) {
   }
   // The main ingredient (first in the plan's variety rule) is the one with the most grams.
   ingredients.sort((a, b) => (amounts[b] ? toGrams(b, ...amounts[b]) : 0) - (amounts[a] ? toGrams(a, ...amounts[a]) : 0));
-  return { name: r.name || "Ny ret", ingredients, amounts, servings: r.servings || 4, url, image: r.image || null };
+  return { name: r.name || "Ny ret", ingredients, amounts, servings: r.servings || 4, url, image: r.image || null,
+    lines: r.ingredients || [], steps: r.steps || null, minutes: r.minutes || null };
 }
 
 // Whether a pantry item covers an ingredient ("græsk yoghurt" covers "yoghurt", "olie" covers "olivenolie").
@@ -1298,6 +1339,12 @@ function App() {
   const [viewServings, setViewServings] = useState({});
   const [importUrl, setImportUrl] = useState("");
   const [importBusy, setImportBusy] = useState(null);
+  const [vrBusy, setVrBusy] = useState(null);         // {done, total} while adding Valdemarsro dinners
+  const [vrOpen, setVrOpen] = useState(false);
+  const [vrTag, setVrTag] = useState(null);
+  const [cookFor, setCookFor] = useState(null);       // name of the meal shown in "Se opskrift"
+  const [cookDone, setCookDone] = useState([]);       // ticked steps
+  const [cookLoading, setCookLoading] = useState(false);
   const [pantryDraft, setPantryDraft] = useState("");
   const [freezerDraft, setFreezerDraft] = useState({ name: "", portions: 2 });
   const [invHistory, setInvHistory] = useState(init.invHistory || []);
@@ -2776,7 +2823,7 @@ function App() {
             return html`<div key=${i} className="row" style=${{alignItems:"flex-start", opacity: m.done || st === "past" ? .55 : 1}}>
             <div style=${{width:76, flexShrink:0, fontWeight:600, paddingTop:2}}>${span(i)}${st === "now" && !planEnded ? html`<div><span className="chip info" style=${{fontSize:11, padding:"1px 8px", marginTop:4, display:"inline-block"}}>I dag</span></div>` : null}</div>
             <div className="main">
-              <div className="title" style=${{whiteSpace:"normal"}}>${m.done ? "✓ " : m.fav ? "♥ " : ""}${m.name}${proteinChip(m.protein)}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
+              <div className="title" style=${{whiteSpace:"normal"}}>${m.done ? "✓ " : m.fav ? "♥ " : ""}${m.name}${proteinChip(m.protein)}</div>
               ${macroLine(m.macros)}
               <div className="small muted" style=${{marginTop:2}}>${m.carried ? "Fra sidste plan · " : ""}${m.portions} portioner${m.done ? ` · lavet${m.rate > 0 ? " 👍" : m.rate < 0 ? " 👎" : ""}` : ""}</div>
               ${lastNote && html`<div className="small" style=${{marginTop:4}}>📝 Næste gang: ${lastNote.text}</div>`}
@@ -2790,6 +2837,7 @@ function App() {
                   <span className="small num">${m.portions} port.</span>
                   <button className="icon-btn" style=${{width:30, height:30}} aria-label="Flere portioner" disabled=${m.portions >= 16} onClick=${()=>setPortions(i, m.portions + 1)}>+</button>
                 </span>
+                ${(rec?.url || m.url) && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(rec || { name: m.name, url: m.url, ingredients: m.items.map(x => x.term) })}>Se opskrift</button>`}
                 <button className="link-btn small" aria-expanded=${doneFor === i} onClick=${()=>{ setDoneFor(doneFor === i ? null : i); setDoneDraft({ rate: 0, note: "", freeze: Math.max(0, m.portions - plan.cookDays * (plan.perNight || 1)) }); }}>${doneFor === i ? "Luk" : "Lavet ✓"}</button>
               </div>`}
               ${doneFor === i && html`<div className="card stack" style=${{marginTop:8, padding:12, background:"var(--surface-2, var(--bg))"}}>
@@ -2838,20 +2886,84 @@ function App() {
     </div>`;
   };
 
+  // Fetch a recipe through the worker and add it as a meal (or refresh the meal with the same link).
+  const fetchMeal = async (u) => {
+    const m = mealFromRecipe(await callBridge("/recipe", { url: u }), u);
+    if (!m.ingredients.length) throw new Error("Fandt ingen ingredienser i opskriften.");
+    return m;
+  };
+  const storeMeal = (m, into) => setShop(s => {
+    const meals = s.meals || [], same = into || meals.find(x => x.url === m.url) || allMeals.find(x => x.url === m.url);
+    const patch = { ingredients: m.ingredients, amounts: m.amounts, servings: m.servings, url: m.url, lines: m.lines, steps: m.steps, minutes: m.minutes, image: m.image };
+    if (same) return {...s, meals: mealPatch(meals, same, patch)};
+    const name = allMeals.some(x => x.name === m.name) ? `${m.name} (Valdemarsro)` : m.name;
+    return {...s, meals: [...meals, { id: uid(), fav: false, ...m, name }]};
+  });
   const importRecipe = async (url, into) => {
     const u = (url || "").trim();
     if (!/^https?:\/\//.test(u)) { flash("meals", "Fejl: indsæt hele linket, fx https://www.valdemarsro.dk/dhal/"); return; }
     setImportBusy(into?.name || "new");
     try {
-      const r = await callBridge("/recipe", { url: u });
-      const m = mealFromRecipe(r, u);
-      if (!m.ingredients.length) throw new Error("Fandt ingen ingredienser i opskriften.");
-      if (into) updateMeal(into, { ingredients: m.ingredients, amounts: m.amounts, servings: m.servings, url: u });
-      else setShop(s => ({...s, meals: [...(s.meals || []), { id: uid(), fav: true, ...m, name: allMeals.some(x => x.name === m.name) ? `${m.name} (ny)` : m.name }]}));
+      const m = await fetchMeal(u);
+      storeMeal(m, into);
       flash("meals", `${into ? "Opdateret" : "Tilføjet"}: ${m.name} – ${m.ingredients.length} ingredienser til ${m.servings} portioner. Tjek dem under Mængder.`, 8000);
       setImportUrl(""); setOpenRecipe(into?.name || m.name);
     } catch (e) { flash("meals", "Fejl: " + (e.message || e), 9000); }
     finally { setImportBusy(null); }
+  };
+  // Add several Valdemarsro dinners in a row (one request at a time, so the site isn't hammered).
+  const addValdemarsro = async (list) => {
+    let ok = 0, fail = 0;
+    for (let i = 0; i < list.length; i++) {
+      setVrBusy({ done: i, total: list.length });
+      try { storeMeal(await fetchMeal(VR_URL(list[i][0]))); ok++; } catch (e) { fail++; if (e.status === 401 || e.code === "secret" || e instanceof NoBridgeError) { flash("meals", "Fejl: " + e.message, 9000); break; } }
+      await new Promise(r => setTimeout(r, 400));
+    }
+    setVrBusy(null);
+    flash("meals", `${ok} ${ok === 1 ? "ret" : "retter"} fra Valdemarsro er tilføjet${fail ? `, ${fail} kunne ikke hentes` : ""}. Tryk ♥ ved dem, du vil have oftere.`, 9000);
+  };
+  // "Se opskrift": the method is fetched the first time and kept with the meal (on this device only).
+  const openCook = async (m) => {
+    setCookFor(m.name); setCookDone([]);
+    if (m.steps?.length || !m.url) return;
+    setCookLoading(true);
+    try { storeMeal(await fetchMeal(m.url), m); }
+    catch (e) { flash("cook", "Fejl: " + (e.message || e), 9000); }
+    finally { setCookLoading(false); }
+  };
+  useEffect(() => {
+    if (!cookFor || !navigator.wakeLock) return;
+    let lock = null; navigator.wakeLock.request("screen").then(l => { lock = l; }).catch(() => {});
+    return () => { lock?.release?.().catch(() => {}); };
+  }, [cookFor]);
+
+  const CookView = () => {
+    const m = allMeals.find(x => x.name === cookFor);
+    if (!m) return null;
+    const steps = m.steps || [], am = mealAmounts(m), base = mealServings(m);
+    let n = 0;
+    return html`<div className="cook-sheet" role="dialog" aria-modal="true" aria-label=${m.name}>
+      <div className="cook-inner">
+        <div style=${{display:"flex", alignItems:"flex-start", gap:10}}>
+          <div style=${{flex:1}}>
+            <div style=${{fontSize:22, fontWeight:700, lineHeight:1.2}}>${m.name}</div>
+            <div className="small muted" style=${{marginTop:4}}>${base} portioner${m.minutes ? ` · ca. ${m.minutes} min.` : ""}${m.url ? html` · <a href=${m.url} target="_blank" rel="noopener" className="link-btn small">Original opskrift ↗</a>` : ""}</div>
+          </div>
+          <button className="icon-btn" aria-label="Luk opskriften" onClick=${()=>setCookFor(null)}>✕</button>
+        </div>
+        ${macroLine(mealMacros(m))}
+        <div className="section-head" style=${{marginTop:18}}><h2>Ingredienser</h2></div>
+        <ul className="cook-ings">${(m.lines?.length ? m.lines : m.ingredients.map(t => `${am[t] ? fmtAmount(am[t][0], am[t][1]) + " " : ""}${t}`)).map((l, i) => html`<li key=${i}>${l}</li>`)}</ul>
+        <div className="section-head" style=${{marginTop:18}}><h2>Sådan gør du</h2>${steps.length > 0 && html`<span className="small faint">Tryk på et trin, når det er klaret</span>`}</div>
+        ${cookLoading ? html`<div className="card empty">Henter fremgangsmåden…</div>`
+          : steps.length ? html`<ol className="cook-steps">${steps.map((st, i) => st.startsWith("## ")
+              ? html`<li key=${i} className="sub">${st.slice(3)}</li>`
+              : html`<li key=${i} className=${cookDone.includes(i) ? "done" : ""} onClick=${()=>setCookDone(cookDone.includes(i) ? cookDone.filter(x => x !== i) : [...cookDone, i])}><span className="n">${++n}</span><span>${st}</span></li>`)}</ol>`
+          : html`<div className="card empty">${m.url ? "Fremgangsmåden kunne ikke hentes. Opdater workeren i Cloudflare, eller åbn den originale opskrift." : "Retten har ikke noget link til en opskrift. Tilføj et under Retter, eller vælg en ret fra Valdemarsro."}</div>`}
+        <${Msg} k="cook" />
+        ${m.url?.includes("valdemarsro") && html`<div className="small faint" style=${{marginTop:16}}>Opskrift fra Valdemarsro.dk – vist til eget brug. Se den originale opskrift for billeder og tips.</div>`}
+      </div>
+    </div>`;
   };
 
   const MealsTab = () => {
@@ -2918,12 +3030,31 @@ function App() {
         </form>
         <${Msg} k="meals" />
       </div>
+      ${(() => {
+        const have = new Set(allMeals.map(m => m.url).filter(Boolean));
+        const list = VALDEMARSRO.filter(([, , tag]) => !vrTag || tag === vrTag), missing = list.filter(([slug]) => !have.has(VR_URL(slug)));
+        return html`<div className="card stack" style=${{marginBottom:12}}>
+          <button className="row" style=${{padding:0, minHeight:0, background:"none", border:0, color:"inherit", textAlign:"left"}} aria-expanded=${vrOpen} onClick=${()=>setVrOpen(!vrOpen)}>
+            <div className="main"><div className="title">Retter fra Valdemarsro</div><div className="sub">${VALDEMARSRO.length} aftensretter · ${VALDEMARSRO.filter(([slug]) => have.has(VR_URL(slug))).length} tilføjet</div></div>
+            <div className="end small link-btn">${vrOpen ? "Skjul" : "Vis"}</div>
+          </button>
+          ${vrOpen && html`<div className="stack" style=${{gap:10}}>
+            <div className="cat-tabs">${VR_TAGS.map(t => html`<button key=${t} className=${vrTag === t ? "on" : ""} aria-pressed=${vrTag === t} onClick=${()=>setVrTag(vrTag === t ? null : t)}>${t}</button>`)}</div>
+            ${vrBusy ? html`<div className="small">Henter ${vrBusy.done + 1} af ${vrBusy.total}…</div><div className="bar" style=${{height:6}}><div style=${{width:`${vrBusy.done / vrBusy.total * 100}%`, background:"var(--accent)"}}></div></div>`
+              : missing.length > 0 && html`<button className="btn soft block" onClick=${()=>addValdemarsro(missing)}>Tilføj ${missing.length === list.length ? "alle" : "de"} ${missing.length}${vrTag ? ` ${vrTag.toLowerCase()}-retter` : ""}</button>`}
+            <div className="list">${list.map(([slug, name, tag]) => { const added = have.has(VR_URL(slug)); return html`<div key=${slug} className="row" style=${{minHeight:46}}>
+              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${name}</div><div className="sub">${tag}</div></div>
+              <div className="end">${added ? html`<span className="small pos">✓ Tilføjet</span>` : html`<button className="link-btn small" disabled=${!!vrBusy} onClick=${()=>addValdemarsro([[slug, name, tag]])}>Tilføj</button>`}</div>
+            </div>`; })}</div>
+            <div className="small faint">Ingredienser og mængder hentes fra valdemarsro.dk, når du tilføjer en ret. Fremgangsmåden ser du under <b>Se opskrift</b>.</div>
+          </div>`}
+        </div>`; })()}
       <div className="small muted" style=${{margin:"0 2px 10px"}}>♥ = vælges oftere. <b>Gider ikke</b> = kommer aldrig med i madplanen. Tryk ✕ for at fjerne en ingrediens, <b>+ Ingrediens</b> for at tilføje og <b>Mængder</b> for gram og portioner.</div>
       <div className="list">${allMeals.map(m => html`<div key=${m.id} className="row" style=${{alignItems:"flex-start", flexWrap:"wrap", opacity: m.skip ? .45 : 1}}>
         <button className="icon-btn" style=${{color: m.fav ? "var(--neg)" : "var(--text-3)", fontSize:20}} aria-pressed=${!!m.fav} aria-label=${`${m.name}: yndlingsret`} disabled=${m.skip}
           onClick=${()=>update(m, { fav: !m.fav })}>${m.fav ? "♥" : "♡"}</button>
         <div className="main">
-          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${proteinChip(mealProtein(m))}${(m.up || m.down) ? html` <span className="small muted" style=${{fontWeight:400}}>${m.up ? ` 👍${m.up}` : ""}${m.down ? ` 👎${m.down}` : ""}</span>` : null}${m.url && html` <a href=${m.url} target="_blank" rel="noopener" className="link-btn small" style=${{whiteSpace:"nowrap"}}>Opskrift ↗</a>`}</div>
+          <div className="title" style=${{whiteSpace:"normal"}}>${m.name}${proteinChip(mealProtein(m))}${(m.up || m.down) ? html` <span className="small muted" style=${{fontWeight:400}}>${m.up ? ` 👍${m.up}` : ""}${m.down ? ` 👎${m.down}` : ""}</span>` : null}${m.minutes ? html` <span className="small muted" style=${{fontWeight:400}}>· ${m.minutes} min.</span>` : null}</div>
           ${m.skip
             ? html`<div className="sub">Kommer ikke med i madplanen</div>`
             : html`<div style=${{display:"flex", flexWrap:"wrap", gap:5, marginTop:6}}>
@@ -2934,6 +3065,7 @@ function App() {
 `}
         </div>
         <div className="end" style=${{display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4}}>
+          ${m.url && !m.skip && html`<button className="link-btn small" style=${{fontWeight:600}} onClick=${()=>openCook(m)}>Se opskrift</button>`}
           ${!m.skip && html`<button className="link-btn small" aria-expanded=${openRecipe === m.name} onClick=${()=>setOpenRecipe(openRecipe === m.name ? null : m.name)}>${openRecipe === m.name ? "Luk" : "Mængder"}</button>`}
           <button className="link-btn small" onClick=${()=>update(m, { skip: !m.skip, fav: false })}>${m.skip ? "Brug igen" : "Gider ikke"}</button>
           ${!m.template && !MEAL_TEMPLATES.some(([n]) => n === m.name) && html`<button className="link-btn small" onClick=${()=>{ const prev = meals; setShop(s => ({...s, meals: (s.meals || []).filter(x => x.id !== m.id)})); showUndo(`${m.name} er slettet`, () => setShop(s => ({...s, meals: prev}))); }}>Slet</button>`}
@@ -3323,6 +3455,7 @@ function App() {
       <span>${toast.text}</span>
       <button onClick=${()=>{ toast.restore(); setToast(null); clearTimeout(toastTimer.current); }}>Fortryd</button>
     </div>`}
+    ${cookFor && CookView()}
     <nav className="nav"><div className="nav-inner">
       ${PAGES.map(p => html`<button key=${p.id} className=${page === p.id ? "on" : ""} aria-current=${page === p.id ? "page" : null} onClick=${()=>{ setPage(p.id); if (p.id === "more" && page === "more") setSub(null); window.scrollTo(0,0); }}><${Icon} name=${p.icon} />${p.label}${p.id === "food" && foodBadge ? html`<span className="nav-dot" aria-label=${planEnded ? "Madplanen er slut" : "Nye tilbud"}></span>` : null}</button>`)}
     </div></nav>
