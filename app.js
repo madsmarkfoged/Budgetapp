@@ -245,6 +245,8 @@ function detectRecurring(transactions, sign, hidden = []) {
   for (const t of transactions) {
     if (!t.date || t.date < since || !(t.amount * sign > 0) || t.trip || t.description === RENT_TEXT) continue;
     if (EXCLUDED.includes(t.category) || ["Løn", "SU", "Husleje", "Opsparing", "Investering"].includes(t.category)) continue;
+    // Regular trips and shopping (Kombardo, Rejsekort, the same supermarket) repeat too, but aren't subscriptions.
+    if (sign < 0 && ["Transport", "Mad & dagligvarer", "Restaurant & café", "Shopping", "Rejser"].includes(t.category)) continue;
     const k = subKey(t.description);
     if (k.length < 3) continue;
     (groups[k] ||= []).push(t);
@@ -2680,37 +2682,52 @@ function App() {
     const planDays = planTotal != null ? Math.max(0, Math.min(daysLeft, Math.round((parseDKDate(addDays(shop.plan.created, shop.plan.nights)) - parseDKDate(today)) / 864e5))) : 0;
     const restDays = daysLeft - planDays, perDayRest = restDays > 0 ? Math.max(0, (after ?? left)) / restDays : 0;
     const weekNo = (iso) => { const t = parseDKDate(iso); t.setDate(t.getDate() + 3 - (t.getDay() + 6) % 7); const y1 = new Date(t.getFullYear(), 0, 4); return 1 + Math.round(((t - y1) / 864e5 - 3 + (y1.getDay() + 6) % 7) / 7); };
-    return html`<div className="card stack" style=${{marginBottom:12}}>
-      <div style=${{display:"flex", alignItems:"baseline", gap:8}}>
+    // Pace: how much of the budget "should" be gone by today (Monzo/Copilot style marker on the bar).
+    const elapsed = totalDays - daysLeft + 1, expected = budget * Math.min(1, elapsed / totalDays), ahead = spent - expected;
+    const planPct = planTotal != null && budget > 0 ? Math.max(0, Math.min(100 - pct, planTotal / budget * 100)) : 0;
+    const perDay = daysLeft > 0 ? Math.max(0, left) / daysLeft : 0;
+    return html`<div className="card stack" style=${{marginBottom:12, gap:14}}>
+      <div style=${{display:"flex", alignItems:"flex-start", gap:8}}>
         <div style=${{flex:1}}>
           <div className="small muted">Madbudget · ${monthName(ym).toLowerCase()}</div>
-          <div style=${{fontSize:24, fontWeight:650}} className=${left < 0 ? "neg" : ""}>${fmt(Math.abs(left))} <span className="small muted" style=${{fontWeight:400}}>${left < 0 ? "over budget" : "tilbage"}</span></div>
+          <div style=${{fontSize:30, fontWeight:700, letterSpacing:"-.5px", lineHeight:1.15, marginTop:2}} className=${left < 0 ? "neg" : ""}>${fmt(Math.abs(left))}</div>
+          <div className="small muted">${left < 0 ? "over budgettet" : `tilbage af ${fmt(budget)}`}</div>
         </div>
-        <button className="link-btn small" onClick=${()=>setFoodBudgetEdit(!foodBudgetEdit)}>${foodBudgetEdit ? "Færdig" : "Ret budget"}</button>
+        <button className="link-btn small" onClick=${()=>setFoodBudgetEdit(!foodBudgetEdit)}>${foodBudgetEdit ? "Færdig" : "Ret"}</button>
       </div>
       ${foodBudgetEdit && html`<label className="field">Budget til mad og dagligvarer pr. måned (kr.)<input className="input" type="number" inputMode="decimal" value=${budget} onChange=${e=>setBudgets({...budgets, [FOOD_CAT]: +e.target.value})} /></label>`}
-      <div className="bar" style=${{height:8}}><div style=${{width:`${pct}%`, background: left < 0 ? "var(--neg)" : CAT_COLORS[FOOD_CAT]}}></div></div>
-      <div className="small muted">Brugt ${fmt(spent)} af ${fmt(budget)}${left > 0 && daysLeft > 0 ? ` · ${fmt(left / daysLeft)} pr. dag i ${daysLeft} dage` : ""}</div>
-      ${after != null && html`<div className=${"small " + (after < 0 ? "neg" : "")}>Madplanen koster ca. ${fmt(Math.round(planTotal))} – ${after < 0 ? html`<b>${fmt(-after)} mere end du har tilbage</b>` : html`så har du ca. <b>${fmt(after)}</b> tilbage`}.</div>`}
-      ${budget > 0 && daysLeft > 0 && html`<div className="small">${planTotal != null && planDays > 0
-        ? html`Madplanen dækker <b>${planDays} af ${daysLeft} dage</b> tilbage (ca. ${fmt(Math.round(planTotal / Math.max(1, shop.plan.nights)))} pr. aften). `
-        : ""}${restDays > 0 ? html`Til ${planTotal != null && planDays > 0 ? "de sidste" : "de"} ${restDays} dage har du ca. <b>${fmt(perDayRest)} pr. dag</b> – ca. ${fmt(perDayRest * 7)} pr. uge til madplaner, morgenmad og frokost.` : ""}</div>`}
-      ${budget > 0 && html`<div className="stack" style=${{gap:7, marginTop:2}}>${weeks.map(w => {
-        const planHere = w.state === "now" && planTotal != null ? planTotal : 0;
-        const over = w.spent + planHere > w.budget;
-        const avail = w.state === "future" ? perDayRest * w.days : null;
-        return html`<div key=${w.from} style=${{opacity: w.state === "past" ? .7 : 1}}>
-          <div style=${{display:"flex", justifyContent:"space-between", gap:8}} className="small">
-            <span><b>Uge ${weekNo(w.from)}</b> <span className="muted">${shortDate(w.from)}${w.from !== w.to ? `–${shortDate(w.to)}` : ""}${w.state === "now" ? " · nu" : ""}</span></span>
-            <span className=${"num " + (over && w.state !== "future" ? "neg" : "muted")}>${w.state === "future"
-              ? `ca. ${fmt(avail)} til rådighed`
-              : `${fmt(w.spent)}${planHere ? ` + plan ${fmt(Math.round(planHere))}` : ""} af ${fmt(w.budget)}`}</span>
-          </div>
-          <div className="bar" style=${{height:5, marginTop:4, display:"flex"}}>
-            <div style=${{width:`${Math.min(100, w.spent / Math.max(1, w.budget) * 100)}%`, background: over ? "var(--neg)" : CAT_COLORS[FOOD_CAT]}}></div>
-            ${planHere > 0 && html`<div style=${{width:`${Math.max(0, Math.min(100 - w.spent / Math.max(1, w.budget) * 100, planHere / Math.max(1, w.budget) * 100))}%`, background: CAT_COLORS[FOOD_CAT], opacity:.4}}></div>`}
-          </div>
-        </div>`; })}</div>`}
+      ${budget > 0 && html`<div>
+        <div className="fb-bar" aria-hidden="true">
+          <div style=${{width:`${pct}%`, background: left < 0 ? "var(--neg)" : CAT_COLORS[FOOD_CAT]}}></div>
+          ${planPct > 0 && html`<div className="fb-plan" style=${{width:`${planPct}%`}}></div>`}
+          ${daysLeft > 0 && html`<span className="fb-pace" style=${{left:`${Math.min(100, expected / budget * 100)}%`}}></span>`}
+        </div>
+        <div style=${{display:"flex", flexWrap:"wrap", gap:6, marginTop:10}}>
+          ${daysLeft > 0 && html`<span className="fb-pill">${fmt(perDay)} pr. dag</span>`}
+          ${daysLeft > 0 && html`<span className=${"fb-pill " + (ahead > budget * 0.05 ? "neg" : "pos")}>${ahead > budget * 0.05 ? `${fmt(ahead)} over tempo` : "På sporet"}</span>`}
+          ${planTotal != null && html`<span className="fb-pill"><i className="fb-dot"></i>Madplan ${fmt(Math.round(planTotal))}</span>`}
+        </div>
+      </div>`}
+      ${budget > 0 && html`<div>
+        <div className="fb-weeks" style=${{gridTemplateColumns:`repeat(${weeks.length}, 1fr)`}}>${weeks.map(w => {
+          // The plan's cost is spread over the days it covers, so it lands in the weeks those days fall in.
+          const pFrom = [today, w.from].sort()[1], pTo = [addDays(today, planDays - 1), w.to].sort()[0];
+          const pDays = planDays > 0 && pFrom <= pTo ? Math.round((parseDKDate(pTo) - parseDKDate(pFrom)) / 864e5) + 1 : 0;
+          const planHere = pDays * (planTotal || 0) / Math.max(1, planDays);
+          const avail = w.state === "future" ? perDayRest * (w.days - pDays) : null;
+          const used = (w.spent + planHere) / Math.max(1, w.budget), over = used > 1;
+          return html`<div key=${w.from} className=${"fb-week " + w.state}>
+            <div className="fb-col">${w.state !== "future" && html`
+              ${planHere > 0 && html`<div className="fb-plan" style=${{height:`${Math.min(100, planHere / Math.max(1, w.budget) * 100)}%`}}></div>`}
+              <div style=${{height:`${Math.min(100, w.spent / Math.max(1, w.budget) * 100)}%`, background: over ? "var(--neg)" : CAT_COLORS[FOOD_CAT]}}></div>`}
+              ${w.state === "future" && planHere > 0 && html`<div className="fb-plan" style=${{height:`${Math.min(100, planHere / Math.max(1, w.budget) * 100)}%`}}></div>`}</div>
+            <div className="fb-wl">${w.state === "now" ? "Nu" : `Uge ${weekNo(w.from)}`}</div>
+            <div className=${"fb-wv num " + (over && w.state !== "future" ? "neg" : "")}>${w.state === "future" ? fmtShort(avail + planHere) : fmtShort(w.spent + planHere)}</div>
+          </div>`; })}</div>
+        <div className="small muted" style=${{marginTop:10}}>${planTotal != null && planDays > 0
+          ? `Madplanen dækker de næste ${planDays} dage. Derefter har du ca. ${fmt(perDayRest * 7)} pr. uge.`
+          : `Du har ca. ${fmt(perDayRest * 7)} pr. uge resten af måneden.`} Stiplede uger viser, hvad du har til rådighed.</div>
+      </div>`}
       ${buys.length > 0 && html`<button className="link-btn small" style=${{alignSelf:"flex-start"}} onClick=${()=>setShowFoodTx(!showFoodTx)}>${showFoodTx ? "Skjul køb" : `Se ${buys.length} køb i ${monthName(ym).toLowerCase()}`}</button>`}
       ${showFoodTx && html`<div className="list">${buys.map(t => html`<div key=${t.id} className="row" style=${{minHeight:44}}>
         <div className="main"><div className="title">${prettyName(t.description)}</div><div className="sub">${shortDate(t.date)}</div></div>
