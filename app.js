@@ -2830,22 +2830,27 @@ function App() {
   };
 
   // ---------- SU-fribeløb ----------
+  // Uses the salary that actually lands on the account: SU counts "personlig indkomst" (pay before tax minus
+  // AM-bidrag), which is the payout divided by (1 − trækprocent). Rest of the year = the recent average.
   const SuPage = () => {
     const su = prefs.su || {}, setSu = (patch) => setPrefs(pr => ({ ...pr, su: { ...(pr.su || {}), ...patch } }));
-    const year = new Date().getFullYear(), gross = +su.gross || 10000, limit = +su.limit || 0;
-    const paid = new Set(transactions.filter(t => t.category === "Løn" && t.amount > 0 && (t.date || "").startsWith(String(year))).map(t => t.date.slice(0, 7)));
-    const monthsLeft = 12 - new Date().getMonth() - (paid.has(isoDate(new Date()).slice(0, 7)) ? 1 : 0);
-    // SU counts "personlig indkomst": pay before tax minus 8 % AM-bidrag.
-    const pi = (n) => n * gross * 0.92;
-    const sofar = pi(paid.size), forecast = pi(paid.size + Math.max(0, monthsLeft));
+    const year = new Date().getFullYear(), limit = +su.limit || 0, rate = Math.min(60, Math.max(0, +su.rate || 38)) / 100;
+    const byMonth = {};
+    for (const t of transactions) if (t.category === "Løn" && t.amount > 0 && (t.date || "").startsWith(String(year))) byMonth[t.date.slice(0, 7)] = (byMonth[t.date.slice(0, 7)] || 0) + t.amount;
+    const months = Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([m, net]) => ({ m, net, pi: net / (1 - rate) }));
+    const sofar = months.reduce((s, x) => s + x.pi, 0);
+    const recent = months.slice(-6), avg = recent.length ? recent.reduce((s, x) => s + x.pi, 0) / recent.length : 0;
+    const thisMonth = isoDate(new Date()).slice(0, 7), monthsLeft = 12 - new Date().getMonth() - (byMonth[thisMonth] ? 1 : 0);
+    const forecast = sofar + avg * Math.max(0, monthsLeft);
     return html`<div>
       <div className="card stack">
         <div className="small muted">Tjener du mere end dit fribeløb ved siden af SU, skal du betale SU tilbage. Fribeløbet afhænger af, hvor mange måneder du får SU – find dit beløb for ${year} på minSU (su.dk).</div>
         <label className="field">Dit fribeløb for ${year} (kr.)<input className="input privacy" type="number" inputMode="decimal" value=${su.limit ?? ""} placeholder="fx 180000" onChange=${e=>setSu({ limit: e.target.value })} /></label>
-        <label className="field">Løn før skat pr. måned (kr.)<input className="input privacy" type="number" inputMode="decimal" value=${su.gross ?? ""} placeholder="10000" onChange=${e=>setSu({ gross: e.target.value })} /></label>
+        <label className="field">Trækprocent på lønnen (%)<input className="input" type="number" inputMode="decimal" value=${su.rate ?? ""} placeholder="38" onChange=${e=>setSu({ rate: e.target.value })} /></label>
+        <div className="small faint">Står på din lønseddel eller forskudsopgørelse (bikort). Bruges til at regne udbetalingen om til løn før skat.</div>
       </div>
       <div className="card stack" style=${{marginTop:12}}>
-        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Indtil nu i ${year} (${paid.size} ${paid.size === 1 ? "lønudbetaling" : "lønudbetalinger"})</span><b className="num">${fmt(sofar)}</b></div>
+        <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Indtil nu i ${year}</span><b className="num">${fmt(sofar)}</b></div>
         <div style=${{display:"flex", justifyContent:"space-between", gap:12}}><span className="small muted">Forventet for hele året</span><b className="num">${fmt(forecast)}</b></div>
         ${limit > 0 ? html`
           <div className="bar" style=${{height:8}}><div style=${{width:`${Math.min(100, forecast / limit * 100)}%`, background: forecast > limit ? "var(--neg)" : forecast > limit * 0.85 ? "var(--warn, #EF9F27)" : "var(--pos)"}}></div></div>
@@ -2853,8 +2858,16 @@ function App() {
             ? html`Du ser ud til at tjene <b>${fmt(forecast - limit)}</b> for meget i ${year}. Du kan sætte SU på pause for nogle måneder eller betale overskydende SU tilbage.`
             : html`Du kan tjene ca. <b className="pos">${fmt(limit - forecast)}</b> mere i ${year}, før du rammer fribeløbet.`}</div>`
           : html`<div className="small">Indtast dit fribeløb ovenfor, så viser appen, hvor tæt du er på.</div>`}
-        <div className="small faint">Regnet som løn før skat minus 8 % AM-bidrag, for hver måned med en lønudbetaling på kontoen, plus samme løn resten af året. Kun et skøn – SU's opgørelse bygger på din årsopgørelse.</div>
+        ${avg > 0 && html`<div className="small muted">Resten af året er regnet med dit snit for de seneste ${recent.length} måneder: ca. ${fmt(avg)} pr. måned (ca. ${fmt(avg / 0.92)} før skat).</div>`}
       </div>
+      ${months.length > 0 && html`<div className="section">
+        <div className="section-head"><h2>Løn i ${year}</h2><span className="small faint">udbetalt → tæller for SU</span></div>
+        <div className="list">${months.slice().reverse().map(x => html`<div key=${x.m} className="row" style=${{minHeight:44}}>
+          <div className="main"><div className="title">${monthName(x.m)}</div></div>
+          <div className="end"><span className="small muted num">${fmt(x.net)} → </span><b className="num">${fmt(x.pi)}</b></div>
+        </div>`)}</div>
+      </div>`}
+      <div className="small faint" style=${{marginTop:12}}>Hentet fra dine lønindbetalinger (kategorien Løn), også feriepenge. Kun et skøn – SU's opgørelse bygger på din årsopgørelse.</div>
     </div>`;
   };
 
