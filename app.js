@@ -2485,9 +2485,11 @@ function App() {
     </div>`;
   };
 
-  // All dinners the planner may use: the starter meals (with the user's edits) plus their own, minus any skipped.
+  // All dinners the planner may use: only recipes from real recipe sites (the user doesn't want the app's own
+  // starter dishes) – the site dishes among the starters (MEAL_SOURCE) plus everything imported or added by the
+  // user, with their edits, minus any skipped. Starter dishes without a source are left out, edited or not.
   const allMeals = [
-    ...MEAL_TEMPLATES.map(([name, ingredients]) => (shop.meals || []).find(m => m.name === name) || { id: "tpl:" + name, name, ingredients, template: true, url: MEAL_SOURCE[name]?.url || null }),
+    ...MEAL_TEMPLATES.filter(([name]) => MEAL_SOURCE[name]).map(([name, ingredients]) => (shop.meals || []).find(m => m.name === name) || { id: "tpl:" + name, name, ingredients, template: true, url: MEAL_SOURCE[name].url }),
     ...(shop.meals || []).filter(m => !MEAL_TEMPLATES.some(([n]) => n === m.name)),
   ];
   const mealPool = allMeals.filter(m => !m.skip && m.ingredients?.length);
