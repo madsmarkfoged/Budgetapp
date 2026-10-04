@@ -7,7 +7,7 @@ import { INCOME_CATS, CATEGORIES, CAT_COLORS, SHORT_CAT, EXCLUDED, RENT_TEXT, gu
 import { DEFAULT_TRAINING, LIFTS, sessionFor, weekProgress, weekStreak, e1rm, parseWorkoutCsv, liftSummary } from "./lib/training.js";
 import { AWAY_WORDS, NOT_AWAY, calendarAway, icsEsc, icsDate, buildIcs } from "./lib/calendar.js";
 import { te, td, syncCryptoKey, gz, sealData, openData, deviceName } from "./lib/sync.js";
-import { TJEK_SEARCH, CHAINS, AARHUS, STAPLES, DEFAULT_SHOP, kr, chainOf, usualStores, searchOffers, MEAL_TEMPLATES, INGREDIENT_GROUPS, MEAL_STEPS, MEAL_SOURCE, VALDEMARSRO, VR_URL, VR_TAGS, MEAL_EXTRAS, OFFER_EXCLUDE, OFFER_ALIASES, OFFER_EXCLUDE_ALL, offerFits, NORMAL_PRICES, normalPrice, MEAL_AMOUNTS, ING, EXTRA_ING, REMA_DATA, PIECE_G, UNITS, UNIT_G, toGrams, mealServings, mealAmounts, perPortion, mealMacros, mealProtein, nice, fmtAmount, BASICS, KNOWN_TERMS, LINE_UNITS, SKIP_LINES, parseIngredientLine, mealFromRecipe, covers, AISLES, aisleOf, packsFor, portionCost, planCost, planWeek } from "./lib/food.js";
+import { TJEK_SEARCH, CHAINS, AARHUS, STAPLES, DEFAULT_SHOP, kr, chainOf, usualStores, searchOffers, MEAL_TEMPLATES, INGREDIENT_GROUPS, MEAL_STEPS, MEAL_SOURCE, VALDEMARSRO, VR_URL, VR_TAGS, MEAL_EXTRAS, OFFER_EXCLUDE, OFFER_ALIASES, OFFER_EXCLUDE_ALL, offerFits, NORMAL_PRICES, normalPrice, MEAL_AMOUNTS, ING, EXTRA_ING, REMA_DATA, PIECE_G, UNITS, UNIT_G, toGrams, mealServings, mealAmounts, perPortion, mealMacros, mealProtein, nice, fmtAmount, BASICS, KNOWN_TERMS, LINE_UNITS, SKIP_LINES, parseIngredientLine, mealFromRecipe, covers, AISLES, aisleOf, packsFor, portionCost, planCost, planWeek, QUICK_MIN, isQuick, quickOnBusy } from "./lib/food.js";
 
 const html = htm.bind(React.createElement);
 
@@ -2545,12 +2545,18 @@ function App() {
     const ev = calendarAway(evs, date);
     return own != null ? { away: own, reason: own ? (ev?.title || "markeret") : null, own: true } : { away: !!ev, reason: ev?.title || null, own: false };
   };
-  // Tap a day: "laver ikke mad" on/off. A mark that matches what the calendar says is removed again.
-  const toggleAway = (date) => setPrefs(pr => {
-    const auto = !!calendarAway(calCache?.events, date), cur = pr.away?.[date] ?? auto, away = { ...(pr.away || {}) };
-    if (!cur === auto) delete away[date]; else away[date] = !cur;
-    for (const d of Object.keys(away)) if (d < isoDate(new Date())) delete away[d];
-    return { ...pr, away };
+  // Tap a day under Madplan: laver mad → travl (quick dinner, ≤ QUICK_MIN min) → ude → laver mad.
+  const busyFor = (date) => !!prefs.busy?.[date];
+  const cycleDay = (date) => setPrefs(pr => {
+    const auto = !!calendarAway(calCache?.events, date), curAway = pr.away?.[date] ?? auto;
+    const away = { ...(pr.away || {}) }, busy = { ...(pr.busy || {}) }, today = isoDate(new Date());
+    const setAway = (v) => { if (v === auto) delete away[date]; else away[date] = v; };
+    if (curAway) { setAway(false); delete busy[date]; }
+    else if (busy[date]) { delete busy[date]; setAway(true); }
+    else busy[date] = true;
+    for (const d of Object.keys(away)) if (d < today) delete away[d];
+    for (const d of Object.keys(busy)) if (d < today) delete busy[d];
+    return { ...pr, away, busy };
   });
 
   const planDay = shop.plan?.created ? Math.round((parseDKDate(isoDate(new Date())) - parseDKDate(shop.plan.created)) / 864e5) : 0;
@@ -2639,7 +2645,11 @@ function App() {
       const count = Math.max(0, Math.ceil(cookNights / cookDays) - carried.length);
       const r0 = planWeek(mealPool.filter(m => !carried.some(c => c.name === m.name)), lists, shopStores, count,
         { staples, rejected: shop.rejected || [], pantry, portions: cookDays * perNight, protein: shop.preferProtein !== false });
-      const r = { ...r0, meals: [...carried, ...r0.meals] };
+      // Busy evenings (⚡ under Madplan) get a quick dinner on the day it's cooked.
+      const all = [...carried, ...r0.meals];
+      const busy = all.map((m, i) => !m.carried && days[i * cookDays] != null && busyFor(addDays(today, days[i * cookDays])));
+      const q = busy.some(Boolean) ? quickOnBusy(all, r0.alts || [], busy) : { meals: all, alts: r0.alts };
+      const r = { ...r0, meals: q.meals, alts: q.alts, ...(q.meals !== all ? planCost(q.meals, r0.staples || []) : {}) };
       let left = fromFreezer; const fz = [];
       for (const f of freezer) { if (left <= 0) break; const n = Math.min(left, +f.portions || 0); if (n) fz.push({ id: f.id, name: f.name, portions: n }); left -= n; }
       setShop(s => ({...s, carry: [], plan: { created: today, nights, cookDays, perNight, cookNights, days, freezer: fz, ...r }}));
@@ -2729,7 +2739,7 @@ function App() {
     const chip = (it, portions) => html`<span key=${it.term} className=${"chip " + (it.offer ? "pos" : "")} style=${it.offer ? {} : {border: `1px ${it.have || it.staple ? "dashed" : "solid"} var(--border)`}}>${it.term}${amountOf(it, portions) ? ` ${amountOf(it, portions)}` : ""}${it.staple ? " · fast vare" : it.have ? " · har" : it.offer ? " · tilbud" : ""}</span>`;
     const recOf = (m) => allMeals.find(x => x.name === m.name);
     const facts = (m) => {
-      const rec = recOf(m), p = m.macros?.p ?? m.protein, min = rec?.minutes || MEAL_STEPS[m.name]?.[0];
+      const rec = recOf(m), p = m.macros?.p ?? m.protein, min = m.minutes || rec?.minutes || MEAL_STEPS[m.name]?.[0];
       return [p != null && `${p} g protein`, (c => c > 0 ? `ca. ${kr(c)}/port.` : m.carried ? "allerede købt" : null)(portionCost(m)), min && `${min} min`].filter(Boolean).join(" · ");
     };
     const canCook = (m) => { const rec = recOf(m); return rec?.url || m.url || MEAL_STEPS[m.name]; };
@@ -2755,7 +2765,9 @@ function App() {
               ${canCook(m) && html`<button className="btn primary" onClick=${()=>cook(m)}>Se opskrift</button>`}
               <button className="btn soft" onClick=${()=>openDone(i, m)}>Lavet ✓</button>
               ${plan.alts?.length > 0 && html`<button className="btn" onClick=${()=>replaceMeal(i)}>Byt</button>`}
-            </div>`}
+            </div>
+            ${!isQuick(m) && (() => { const k = (plan.alts || []).findIndex(isQuick); return k >= 0 && html`<button className="quick-swap" onClick=${()=>replaceMeal(i, k)}>
+              ⚡ ${busyFor(isoDate(new Date())) ? "Travl dag? " : ""}Byt til en hurtig ret: <b>${plan.alts[k].name}</b> · ${plan.alts[k].minutes} min</button>`; })()}`}
         </div>
       </div>`;
     };
@@ -2805,7 +2817,7 @@ function App() {
             .map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length }))
             .sort((x, y) => (y.a.fav - x.a.fav) || x.a.name.localeCompare(y.a.name, "da"))
             .map(({ a, k, hits }) => html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:44}} onClick=${()=>replaceMeal(i, k)}>
-              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div>${a.protein != null && html`<div className="sub">${a.protein} g protein</div>`}</div>
+              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div><div className="sub">${[a.minutes && `${isQuick(a) ? "⚡ " : ""}${a.minutes} min`, a.protein != null && `${a.protein} g protein`].filter(Boolean).join(" · ")}</div></div>
               <div className=${"end small " + (hits ? "pos" : "muted")}>${hits}/${a.items.length} på tilbud</div>
             </button>`)}</div>`}
         </div>`}
@@ -2863,10 +2875,11 @@ function App() {
       ${ready && !planEnded && Tonight()}
 
       <div className="section" style=${{marginTop: ready && !planEnded ? 16 : 0}}>
-        <div className="section-head"><h2>Hvornår laver du mad?</h2><span className="small faint">tryk for at skifte</span></div>
+        <div className="section-head"><h2>Hvornår laver du mad?</h2><span className="small faint">🍽 → ⚡ travl → ude</span></div>
         <div className="day-chips">${days.map((date, k) => { const a = awayFor(date), d = parseDKDate(date);
-          return html`<button key=${date} className=${"day-chip " + (a.away ? "away" : "")} aria-pressed=${!a.away} title=${a.reason || ""} onClick=${()=>toggleAway(date)}>
-            <b>${k === 0 ? "I dag" : k === 1 ? "I morgen" : WEEKDAYS[d.getDay()].slice(0, 3)}</b><span>${d.getDate()}/${d.getMonth() + 1}</span><i>${a.away ? (a.own ? "ude" : "📅 ude") : "🍽"}</i></button>`; })}</div>
+          const busy = !a.away && busyFor(date);
+          return html`<button key=${date} className=${"day-chip " + (a.away ? "away" : busy ? "busy" : "")} aria-label=${`${WEEKDAYS[d.getDay()]}: ${a.away ? "laver ikke mad" : busy ? "travl dag, hurtig ret" : "laver mad"}`} title=${a.reason || ""} onClick=${()=>cycleDay(date)}>
+            <b>${k === 0 ? "I dag" : k === 1 ? "I morgen" : WEEKDAYS[d.getDay()].slice(0, 3)}</b><span>${d.getDate()}/${d.getMonth() + 1}</span><i>${a.away ? (a.own ? "ude" : "📅 ude") : busy ? "⚡ travl" : "🍽"}</i></button>`; })}</div>
         ${(() => { const out = days.map(d => [d, awayFor(d)]).filter(([, a]) => a.away && a.reason && !a.own);
           return out.length > 0 && html`<div className="small faint" style=${{marginTop:6}}>Fra kalenderen: ${out.map(([d, a]) => `${WEEKDAYS[parseDKDate(d).getDay()].slice(0, 3).toLowerCase()} (${a.reason})`).join(", ")}.</div>`; })()}
       </div>

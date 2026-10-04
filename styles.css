@@ -406,6 +406,8 @@ select.input { appearance: auto; }
 .day-chip i { font-style: normal; font-size: 12px; margin-top: 2px; }
 .day-chip.away { background: transparent; border-style: dashed; opacity: .7; }
 .day-chip.away b { text-decoration: line-through; }
+.day-chip.busy { border-color: var(--warn, #EF9F27); background: color-mix(in srgb, #EF9F27 14%, var(--track)); }
+.quick-swap { display: block; width: 100%; margin-top: 10px; text-align: left; background: color-mix(in srgb, #EF9F27 12%, transparent); border: 1px solid color-mix(in srgb, #EF9F27 40%, transparent); color: inherit; font: inherit; font-size: 13.5px; border-radius: 12px; padding: 9px 12px; cursor: pointer; }
 /* Træning */
 .wk-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--accent); display: inline-block; }
 .wk-dot.on { background: var(--accent); }
