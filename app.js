@@ -2740,7 +2740,7 @@ function App() {
     const recOf = (m) => allMeals.find(x => x.name === m.name);
     const facts = (m) => {
       const rec = recOf(m), p = m.macros?.p ?? m.protein, min = m.minutes || rec?.minutes || MEAL_STEPS[m.name]?.[0];
-      return [p != null && `${p} g protein`, (c => c > 0 ? `ca. ${kr(c)}/port.` : m.carried ? "allerede købt" : null)(portionCost(m)), min && `${min} min`].filter(Boolean).join(" · ");
+      return [m.saving >= 5 && `sparer ${kr(m.saving)}`, p != null && `${p} g protein`, (c => c > 0 ? `ca. ${kr(c)}/port.` : m.carried ? "allerede købt" : null)(portionCost(m)), min && `${min} min`].filter(Boolean).join(" · ");
     };
     const canCook = (m) => { const rec = recOf(m); return rec?.url || m.url || MEAL_STEPS[m.name]; };
     const cook = (m) => { const rec = recOf(m); openCook(rec || { name: m.name, url: m.url, ingredients: m.items.map(x => x.term) }, m.portions); };
