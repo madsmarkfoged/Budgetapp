@@ -471,7 +471,8 @@ function App() {
   const [planBusy, setPlanBusy] = useState(false);
   const [stapleDraft, setStapleDraft] = useState("");
   const [pickMeal, setPickMeal] = useState(null);
-  const [openMeal, setOpenMeal] = useState(null);      // plan meal shown with ingredients and actions
+  const [openMeal, setOpenMeal] = useState(null);
+  const [altSort, setAltSort] = useState("saving");    // order of the "Skift ret" list      // plan meal shown with ingredients and actions
   const [showBuy, setShowBuy] = useState(false);       // the plan's shopping, item by item
   const [planSetup, setPlanSetup] = useState(false);
   const [foodBudgetOpen, setFoodBudgetOpen] = useState(() => store.get("food_budget_open") === "1");   // madplan settings (shown when there's no plan)
@@ -2814,14 +2815,20 @@ function App() {
             ${m.items.some(x => x.fresh) && html`<div className="small faint">${m.items.filter(x => x.fresh).map(x => x.term).join(", ")} fjernes fra "Har lige nu".</div>`}
             <button className="btn primary" onClick=${()=>finishMeal(i)}>Gem</button>
           </div>`}
-          ${pickMeal === i && html`<div className="small muted" style=${{margin:"10px 2px 6px"}}>Vælg en anden ret – dem, der sparer mest på ugens tilbud, står øverst:</div>
-          <div className="list">${plan.alts
-            .map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length }))
-            .sort((x, y) => ((y.a.saving ?? 0) - (x.a.saving ?? 0)) || x.a.name.localeCompare(y.a.name, "da"))
-            .map(({ a, k, hits }) => html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:44}} onClick=${()=>replaceMeal(i, k)}>
-              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div><div className="sub">${[a.saving >= 5 && `sparer ${kr(a.saving)}`, a.minutes && `${isQuick(a) ? "⚡ " : ""}${a.minutes} min`, a.protein != null && `${a.protein} g protein`].filter(Boolean).join(" · ")}</div></div>
-              <div className=${"end small " + (hits ? "pos" : "muted")}>${hits}/${a.items.length} på tilbud</div>
-            </button>`)}</div>`}
+          ${pickMeal === i && (() => {
+            const SORTS = [["saving", "Sparer mest"], ["price", "Billigst"], ["time", "Hurtigst"], ["protein", "Protein"]];
+            const cur = portionCost(m);
+            const rows = plan.alts.map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length, price: portionCost({ ...a, portions: m.portions }) }));
+            const by = { saving: (x, y) => (y.a.saving ?? 0) - (x.a.saving ?? 0), price: (x, y) => x.price - y.price,
+              time: (x, y) => (x.a.minutes ?? 999) - (y.a.minutes ?? 999), protein: (x, y) => (y.a.protein ?? 0) - (x.a.protein ?? 0) }[altSort] || (() => 0);
+            rows.sort((x, y) => by(x, y) || x.a.name.localeCompare(y.a.name, "da"));
+            return html`<div className="cat-tabs" style=${{margin:"12px 0 8px"}}>${SORTS.map(([id, label]) => html`<button key=${id} className=${altSort === id ? "on" : ""} aria-pressed=${altSort === id} onClick=${()=>setAltSort(id)}>${label}</button>`)}</div>
+            <div className="small muted" style=${{margin:"0 2px 6px"}}>Nu: ${m.name} · ca. ${kr(cur)}/port. Prisen til højre er pr. portion, og forskellen er for alle ${m.portions} portioner.</div>
+            <div className="list">${rows.map(({ a, k, hits, price }) => { const diff = (price - cur) * m.portions;
+              return html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:52}} onClick=${()=>replaceMeal(i, k)}>
+              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div><div className="sub">${[a.saving >= 5 && `sparer ${kr(a.saving)}`, a.minutes && `${isQuick(a) ? "⚡ " : ""}${a.minutes} min`, a.protein != null && `${a.protein} g protein`, `${hits}/${a.items.length} på tilbud`].filter(Boolean).join(" · ")}</div></div>
+              <div className="end" style=${{textAlign:"right"}}><div className="num" style=${{fontWeight:600}}>${kr(price)}</div><div className=${"small " + (diff < -2 ? "pos" : diff > 2 ? "neg" : "muted")}>${Math.abs(diff) <= 2 ? "samme pris" : `${diff > 0 ? "+" : "−"}${kr(Math.abs(Math.round(diff)))}`}</div></div>
+            </button>`; })}</div>`; })()}
         </div>`}
       </div>`;
     };
