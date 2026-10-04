@@ -472,3 +472,5 @@ select.input { appearance: auto; }
 .food-sum .bar { height: 5px; margin-top: 6px; }
 .meal-search { display: flex; gap: 8px; }
 .meal-search .input { flex: 1; min-width: 0; }
+.meal-card { position: relative; }
+.meal-swap { display: block; margin: -4px 14px 12px 90px; background: none; border: 1px solid var(--border); color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; border-radius: 99px; padding: 5px 12px; cursor: pointer; }

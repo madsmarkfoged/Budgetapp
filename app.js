@@ -2784,6 +2784,7 @@ function App() {
           </div>
           <span className="meal-chev">${open ? "−" : "+"}</span>
         </button>
+        ${!m.done && st !== "past" && plan.alts?.length > 0 && html`<button className="meal-swap" aria-expanded=${open && pickMeal === i} onClick=${()=>{ const on = open && pickMeal === i; setOpenMeal(on ? null : i); setPickMeal(on ? null : i); }}>${open && pickMeal === i ? "Luk" : "Skift ret"}</button>`}
         ${open && html`<div className="meal-body">
           ${macroLine(m.macros)}
           ${lastNote && html`<div className="small" style=${{marginTop:4}}>📝 Næste gang: ${lastNote.text}</div>`}
@@ -2813,11 +2814,12 @@ function App() {
             ${m.items.some(x => x.fresh) && html`<div className="small faint">${m.items.filter(x => x.fresh).map(x => x.term).join(", ")} fjernes fra "Har lige nu".</div>`}
             <button className="btn primary" onClick=${()=>finishMeal(i)}>Gem</button>
           </div>`}
-          ${pickMeal === i && html`<div className="list" style=${{marginTop:8}}>${plan.alts
+          ${pickMeal === i && html`<div className="small muted" style=${{margin:"10px 2px 6px"}}>Vælg en anden ret – dem, der sparer mest på ugens tilbud, står øverst:</div>
+          <div className="list">${plan.alts
             .map((a, k) => ({ a, k, hits: a.items.filter(x => x.offer).length }))
-            .sort((x, y) => (y.a.fav - x.a.fav) || x.a.name.localeCompare(y.a.name, "da"))
+            .sort((x, y) => ((y.a.saving ?? 0) - (x.a.saving ?? 0)) || x.a.name.localeCompare(y.a.name, "da"))
             .map(({ a, k, hits }) => html`<button key=${a.mealId || a.name} className="row" style=${{minHeight:44}} onClick=${()=>replaceMeal(i, k)}>
-              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div><div className="sub">${[a.minutes && `${isQuick(a) ? "⚡ " : ""}${a.minutes} min`, a.protein != null && `${a.protein} g protein`].filter(Boolean).join(" · ")}</div></div>
+              <div className="main"><div className="title" style=${{whiteSpace:"normal"}}>${a.fav ? "♥ " : ""}${a.name}</div><div className="sub">${[a.saving >= 5 && `sparer ${kr(a.saving)}`, a.minutes && `${isQuick(a) ? "⚡ " : ""}${a.minutes} min`, a.protein != null && `${a.protein} g protein`].filter(Boolean).join(" · ")}</div></div>
               <div className=${"end small " + (hits ? "pos" : "muted")}>${hits}/${a.items.length} på tilbud</div>
             </button>`)}</div>`}
         </div>`}
